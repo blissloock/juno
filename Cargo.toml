@@ -1,0 +1,35 @@
+[package]
+name = "ProyectoIntegrador"
+version = "0.1.0"
+edition = "2021" # Cambiado a 2021 para máxima compatibilidad con crates de red
+
+[dependencies]
+# 1. Runtime Asíncrono y Utilidades (Con soporte completo para subprocesos/Nmap)
+tokio = { version = "1.35", features = ["full", "process"] }
+futures-util = "0.3"
+
+# 2. Servidor Web / API (Consumido por el equipo)
+actix-web = "4.4"
+actix-cors = "0.6" # Previene bloqueos de CORS con el Nginx del frontend
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 3. Base de Datos Asíncrona (Postgres / TimescaleDB)
+sqlx = { version = "0.7", features = [ "runtime-tokio-native-tls", "postgres", "chrono" ] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# 4. Alertas por Correo (Gmail)
+lettre = { version = "0.11", features = ["tokio1-native-tls", "smtp"] }
+
+# 5. Logging para depuración en consola de Docker
+env_logger = "0.10"
+log = "0.4"
+
+# 6. Protocolos de Red y Gestión (Conexión física a tu Homelab)
+netflow-parser = "0.5"      # Para decodificar paquetes NetFlow v5/v9 del router Cisco
+snmp = "0.2"                # Cliente SNMP para monitorear CPU/RAM del HP Z620 y router
+russh = "0.40"              # Cliente SSH asíncrono para automatización de comandos
+russh-keys = "0.40"         # Manejo de llaves de seguridad SSH
+
+# 7. Ejecución de comandos y Parsing (para Nmap)
+quick-xml = { version = "0.31", features = ["serialize"] } # Para parsear los escaneos XML de Nmap

@@ -1,0 +1,21 @@
+FROM --platform=linux/amd64 rust:1.75-slim AS planner
+WORKDIR /app
+RUN cargo install cargo-chef
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+FROM --platform=linux/amd64 rust:1.75-slim AS builder
+WORKDIR /app
+RUN cargo install cargo-chef
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
+RUN cargo build --release
+FROM --platform=linux/amd64 debian:bookworm-slim AS runner
+WORKDIR /app
+RUN apt-get update && apt-get install -y \
+ca-certificates nmap iputils-ping \
+&& rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/ProyectoIntegrador ./backend_bin
+EXPOSE 8080
+EXPOSE 2055/udp
+CMD ["./backend_bin"]
