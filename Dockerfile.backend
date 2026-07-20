@@ -1,21 +1,71 @@
-FROM --platform=linux/amd64 rust:1.75-slim AS planner
+# ==========================================
+# BASE: imagen con cargo-chef ya precompilado
+# (evita "cargo install cargo-chef" desde cero en cada etapa)
+# ==========================================
+FROM --platform=linux/amd64 lukemathwalker/cargo-chef:latest-rust-1.97-slim AS chef
 WORKDIR /app
-RUN cargo install cargo-chef
+
+# ==========================================
+# ETAPA 1: Planeación de Dependencias (Optimización de Caché)
+# ==========================================
+FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
-FROM --platform=linux/amd64 rust:1.75-slim AS builder
+
+# ==========================================
+# ETAPA 2: Compilación de Dependencias
+# ==========================================
+FROM chef AS builder
 WORKDIR /app
-RUN cargo install cargo-chef
+
+# Herramientas de compilación y OpenSSL necesarias para las dependencias
+# (sqlx con native-tls, lettre, etc.)
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
+
+# ==========================================
+# ETAPA 3: Compilación del Código Fuente
+# ==========================================
 COPY . .
 RUN cargo build --release
+
+# ==========================================
+# ETAPA 4: Contenedor de Ejecución (Ultra ligero)
+# ==========================================
 FROM --platform=linux/amd64 debian:bookworm-slim AS runner
 WORKDIR /app
+
+# Librerías de runtime + curl (para el HEALTHCHECK contra /health)
 RUN apt-get update && apt-get install -y \
-ca-certificates nmap iputils-ping \
-&& rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    libssl3 \
+    nmap \
+    iputils-ping \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Usuario no-root: el binario no necesita privilegios de root para correr.
+# Si más adelante nmap.rs necesita sockets raw (-sS, -O), es mejor otorgar
+# capabilities específicas vía "cap_add" en docker-compose.yml que correr
+# todo el proceso como root.
+RUN useradd --create-home --shell /usr/sbin/nologin appuser
+
 COPY --from=builder /app/target/release/ProyectoIntegrador ./backend_bin
+COPY --from=builder /app/target/release/crear_admin ./crear_admin
+RUN chown appuser:appuser ./backend_bin ./crear_admin
+
+USER appuser
+
 EXPOSE 8080
 EXPOSE 2055/udp
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
 CMD ["./backend_bin"]

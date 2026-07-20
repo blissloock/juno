@@ -1,1 +1,15 @@
-/target
+# 1. Secretos y configuraciones locales (LO MÁS IMPORTANTE)
+.env
+/.env
+
+# 2. Compilados de Rust
+/target/
+**/*.rs.bk
+
+# 3. Archivos de editores de código (VS Code, IntelliJ)
+.vscode/
+.idea/
+
+# 4. Archivos basura del sistema operativo (Mac y Windows)
+.DS_Store
+Thumbs.db

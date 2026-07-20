@@ -1,0 +1,85 @@
+/* Estilos base compartidos y adaptados */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --navy:      #1a2237;
+  --navy-dark: #111827;
+  --bg:        #f4f5f7;
+  --bg-card:   #eceef2;
+  --white:     #ffffff;
+  --text:      #1a2237;
+  --muted:     #5a6478;
+  --accent:    #e02424;
+  --radius-lg: 2rem;
+  --radius-sm: 0.5rem;
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body:    'Inter', system-ui, sans-serif;
+}
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+a { text-decoration: none; color: inherit; }
+
+/* NAVBAR */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg);
+  border-bottom: 1px solid rgba(26,34,55,.08);
+  padding: 0 2rem;
+}
+.nav-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+.nav-logo { display: flex; align-items: center; gap: 0.75rem; }
+.logo-badge { width: 46px; height: 46px; display: flex; align-items: center; justify-content: center; }
+.logo-svg { width: 100%; height: 100%; }
+.logo-text { line-height: 1.2; }
+.logo-text strong { font-size: 1.05rem; font-weight: 700; display: block; }
+.logo-text span { font-size: 0.62rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.nav-links { display: flex; align-items: center; gap: 2rem; }
+.nav-links a { font-size: 0.92rem; font-weight: 500; color: var(--text); transition: opacity .2s; }
+.nav-links a:hover, .nav-links a.active { opacity: 0.6; border-bottom: 2px solid var(--navy); }
+.btn-cta { background: var(--navy-dark); color: var(--white); font-size: 0.88rem; font-weight: 600; padding: 0.7rem 1.4rem; border-radius: var(--radius-sm); transition: background .2s; cursor: pointer; }
+.btn-cta:hover { background: #2d3a52; }
+
+/* CONTAINER & SECTIONS */
+.container { max-width: 1280px; margin: 0 auto; padding: 4rem 2rem; }
+.section-header { text-align: center; max-width: 700px; margin: 0 auto 4rem auto; }
+.eyebrow { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem; }
+.headline { font-family: var(--font-display); font-size: clamp(2.5rem, 4vw, 3.5rem); font-weight: 800; color: var(--navy-dark); margin-bottom: 1rem; }
+.section-body { font-size: 1.05rem; line-height: 1.65; color: var(--muted); }
+
+/* CATALOG GRID */
+.grid-catalog { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; margin-bottom: 5rem; }
+.card-program { background: var(--white); border-radius: var(--radius-lg); padding: 2.5rem; box-shadow: 0 4px 20px rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.04); position: relative; }
+.card-program.featured { border: 2px solid var(--navy); background: #fdfdfd; }
+.program-tag { display: inline-block; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; padding: 0.25rem 0.75rem; border-radius: 50px; background: var(--bg-card); color: var(--navy); margin-bottom: 1.5rem; }
+.program-tag.highlight { background: var(--navy); color: var(--white); }
+.card-program h2 { font-family: var(--font-display); font-size: 1.8rem; margin-bottom: 1rem; color: var(--navy-dark); }
+.card-program p { font-size: 0.95rem; color: var(--muted); line-height: 1.6; margin-bottom: 1.5rem; }
+.program-features { list-style: none; display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.95rem; }
+.program-features li::before { content: "✓ "; color: var(--navy); font-weight: bold; margin-right: 0.5rem; }
+
+/* ADDITIONAL INFO */
+.additional-info { display: grid; grid-template-columns: 1fr 1.5fr; gap: 4rem; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 4rem; }
+.info-block h3 { font-family: var(--font-display); font-size: 1.5rem; margin-bottom: 1.5rem; color: var(--navy-dark); }
+.list-checked { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.list-checked li::before { content: "• "; color: var(--accent); font-weight: bold; margin-right: 0.5rem; }
+.level-item { margin-bottom: 1.25rem; }
+.level-item strong { display: block; font-size: 1rem; color: var(--navy); margin-bottom: 0.25rem; }
+.level-item p { font-size: 0.9rem; color: var(--muted); line-height: 1.5; }
+
+@media (max-width: 768px) {
+  .additional-info { grid-template-columns: 1fr; gap: 2.5rem; }
+  .list-checked { grid-template-columns: 1fr; }
+}

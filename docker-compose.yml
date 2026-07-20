@@ -1,23 +1,28 @@
-version: '3.8'
-
 services:
   # 1. Base de datos de series temporales (TimescaleDB)
   db:
     image: timescale/timescaledb:latest-pg16
     container_name: integrador_db
     restart: always
+    env_file:
+      - .env
     environment:
-      POSTGRES_DB: monitoreo_db
-      POSTGRES_USER: admin_rust
-      POSTGRES_PASSWORD: password_seguro_123
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # SEGURIDAD: ya NO se publica el puerto 5432 al host/exterior.
+    # El backend le habla a "db:5432" dentro de la red interna de Docker
+    # (red_monitoreo); nadie fuera del docker-compose necesita tocar la
+    # base de datos directamente. Si en algún momento necesitas conectarte
+    # con un cliente SQL desde tu máquina para depurar, usa:
+    #   docker compose exec db psql -U $POSTGRES_USER -d $POSTGRES_DB
+    # en vez de exponer el puerto al mundo.
     volumes:
       - db_data:/var/lib/postgresql/data
     networks:
       - red_monitoreo
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin_rust -d monitoreo_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,17 +34,25 @@ services:
       dockerfile: Dockerfile.backend
     container_name: integrador_backend
     restart: always
-    # Forzamos plataforma linux/amd64 (x86_64) para emulación en tu Mac M4
     platform: linux/amd64
     ports:
       - "8080:8080"
-      - "2055:2055/udp"  # Puerto para recibir flujos de NetFlow si se requiere
+      - "2055:2055/udp"
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=postgres://admin_rust:password_seguro_123@db:5432/monitoreo_db
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - RUST_LOG=info
       - PORT=8080
-      - GMAIL_USER=tu_correo_de_pruebas@gmail.com
-      - GMAIL_PASS=tu_contrasena_de_aplicacion
+      - GMAIL_USER=${GMAIL_USER}
+      - GMAIL_PASS=${GMAIL_PASS}
+      - JWT_SECRET=${JWT_SECRET}
+      - FRONTEND_ORIGIN=${FRONTEND_ORIGIN}
+    # Descomentar cuando nmap.rs haga escaneos que requieran sockets raw
+    # (por ejemplo -sS o detección de SO con -O):
+    # cap_add:
+    #   - NET_RAW
+    #   - NET_ADMIN
     depends_on:
       db:
         condition: service_healthy

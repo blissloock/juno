@@ -1,0 +1,10 @@
+target/
+.git/
+.gitignore
+.env
+.env.example
+frontend/
+*.md
+*.pdf
+*.png
+*.zip
