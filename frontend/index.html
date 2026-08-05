@@ -1,216 +1,148 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Personal English – Excelencia que transforma vidas</title>
-
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-
-  <link rel="stylesheet" href="styles.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Monitoreo de Redes</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <header class="navbar">
-    <nav class="nav-inner" aria-label="Navegación principal">
-
-      <a href="#inicio" class="nav-logo" aria-label="Personal English – inicio">
-        <div class="logo-badge">
-          <svg viewBox="0 0 100 100" style="width: 100%; height: 100%;">
-            <circle cx="50" cy="50" r="45" fill="none" stroke="#1a2237" stroke-width="6"/>
-            <path d="M50,15 L50,85 M25,40 L50,15 L75,40 M25,60 L50,85 L75,60" fill="none" stroke="#e02424" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+    <!-- PANTALLA DE BIENVENIDA -->
+    <div id="pantalla-bienvenida" class="screen flex-center">
+        <div class="welcome-card">
+            <h1>¡Bienvenido al Sistema de Monitoreo!</h1>
+            <p>Control, alertas y gestión de dispositivos en tiempo real.</p>
+            <button id="btn-empezar" class="btn btn-success btn-lg">Empezar</button>
         </div>
-        <div class="logo-text">
-          <strong>Personal English</strong>
-          <span>Excelencia que transforma vidas</span>
-        </div>
-      </a>
-
-      <ul class="nav-links" role="list">
-        <li><a href="cursos/cursos.html">Cursos</a></li>
-        <li><a href="metodologia/metodologia.html">Metodología</a></li>
-        <li><a href="nosotros/nosotros.html">Nosotros</a></li>
-        <li><a href="contacto/contacto.html">Contacto</a></li>
-      </ul>
-
-      <a href="contacto/contacto.html" class="btn-cta desktop-only">Agenda tu diagnóstico</a>
-
-      <button
-        class="hamburger"
-        id="hamburger"
-        aria-label="Abrir menú"
-        aria-expanded="false"
-        aria-controls="mobile-menu"
-      >
-        <span></span>
-        <span></span>
-        <span></span>
-      </button>
-
-    </nav>
-
-    <div class="mobile-menu" id="mobile-menu" role="navigation" aria-label="Menú móvil">
-      <a href="cursos/cursos.html">Cursos</a>
-      <a href="metodologia/metodologia.html">Metodología</a>
-      <a href="nosotros/nosotros.html">Nosotros</a>
-      <a href="contacto/contacto.html">Contacto</a>
-      <a href="contacto/contacto.html" class="btn-cta">Agenda tu diagnóstico</a>
     </div>
-  </header>
 
+    <!-- PANEL PRINCIPAL -->
+    <div id="panel-principal" class="screen hidden">
+        <!-- MENÚ LATERAL -->
+        <aside class="sidebar">
+            <h2 class="menu-title">PANEL CONTROL</h2>
+            <nav class="menu-nav">
+                <button class="nav-btn active" data-target="sec-dispositivos">DISPOSITIVOS CONECTADOS</button>
+                <button class="nav-btn" data-target="sec-alertas">ALERTAS</button>
+                <button class="nav-btn" data-target="sec-estado">ESTADO DEL DISPOSITIVO</button>
+            </nav>
+        </aside>
 
-  <main id="inicio">
-    <section class="hero" aria-label="Sección principal">
+        <!-- CONTENIDO PRINCIPAL -->
+        <main class="content">
+            <!-- SECCIÓN 1: DISPOSITIVOS CONECTADOS -->
+            <section id="sec-dispositivos" class="tab-content active">
+                <div class="header-section">
+                    <h2>Dispositivos Conectados</h2>
+                    <div class="actions-bar">
+                        <button id="btn-nuevo" class="btn btn-success">➕ NUEVO</button>
+                        <button id="btn-reemplazar" class="btn btn-warning">🔄 REEMPLAZAR</button>
+                        <button id="btn-eliminar" class="btn btn-danger">❌ ELIMINAR</button>
+                        <button id="btn-ping" class="btn btn-primary">⚡ Probar Conexión Ping</button>
+                    </div>
+                </div>
 
-      <div class="hero-left">
+                <div class="table-container">
+                    <table id="tabla-dispositivos">
+                        <thead>
+                            <tr>
+                                <th>Nombre del dispositivo</th>
+                                <th>Tipo</th>
+                                <th>IP</th>
+                                <th>Estado del dispositivo en tiempo real</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
 
-        <p class="eyebrow">Inglés que abre puertas</p>
+            <!-- SECCIÓN 2: ALERTAS -->
+            <section id="sec-alertas" class="tab-content">
+                <h2>Panel de Alertas</h2>
+                <div id="contenedor-alertas" class="alerts-container"></div>
+            </section>
 
-        <h1 class="hero-headline">
-          Tu mejor versión<br>habla inglés.
-        </h1>
+            <!-- SECCIÓN 3: ESTADO DEL DISPOSITIVO -->
+            <section id="sec-estado" class="tab-content">
+                <div class="header-section">
+                    <h2>Estado Detallado del Dispositivo (Tiempo Real)</h2>
+                    <button id="btn-refrescar-metricos" class="btn btn-primary">🔄 Actualizar Métricos en Tiempo Real</button>
+                </div>
 
-        <p class="hero-body">
-          En Personal English, la excelencia académica y el acompañamiento
-          cercano impulsan tu crecimiento para que construyas una vida con
-          más oportunidades.
-        </p>
+                <div class="table-container">
+                    <table id="tabla-estado">
+                        <thead>
+                            <tr>
+                                <th>Nombre</th>
+                                <th>IP</th>
+                                <th>Capacidad CPU</th>
+                                <th>Capacidad RAM</th>
+                                <th>Última Actualización</th>
+                                <th>Temperatura</th>
+                                <th>Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
 
-        <div class="hero-pillars" role="list">
+    <!-- MODAL FORMULARIO -->
+    <div id="modal-form" class="modal hidden">
+        <div class="modal-content">
+            <h3 id="modal-titulo">Nuevo Dispositivo</h3>
+            <form id="form-dispositivo">
+                <input type="hidden" id="disp-index">
+                <div class="form-group">
+                    <label for="txt-nombre">Nombre:</label>
+                    <input type="text" id="txt-nombre" required placeholder="Ej. RouterCasa">
+                </div>
+                <div class="form-group">
+                    <label for="txt-tipo">Tipo:</label>
+                    <input type="text" id="txt-tipo" required placeholder="Ej. Router / PC">
+                </div>
+                <div class="form-group">
+                    <label for="txt-ip">IP del Dispositivo:</label>
+                    <input type="text" id="txt-ip" required placeholder="Ej. 192.168.1.1">
+                </div>
+                
+                <button type="button" id="btn-escanear" class="btn btn-primary btn-block">🔍 Escanear Dispositivo (Auto)</button>
 
-          <div class="pillar" role="listitem">
-            <svg class="pillar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-            </svg>
-            <p class="pillar-title">Excelencia<br>académica</p>
-            <p class="pillar-desc">Estándares altos,<br>resultados reales.</p>
-          </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>CPU (Auto):</label>
+                        <input type="text" id="txt-cpu" readonly placeholder="Auto...">
+                    </div>
+                    <div class="form-group">
+                        <label>RAM (Auto):</label>
+                        <input type="text" id="txt-ram" readonly placeholder="Auto...">
+                    </div>
+                    <div class="form-group">
+                        <label>Temperatura (Auto):</label>
+                        <input type="text" id="txt-temp" readonly placeholder="Auto...">
+                    </div>
+                    <div class="form-group">
+                        <label>Última Actualización:</label>
+                        <input type="text" id="txt-uptime" readonly placeholder="Auto...">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Estado Detectado:</label>
+                    <input type="text" id="txt-estado" readonly placeholder="Auto...">
+                </div>
 
-          <div class="pillar" role="listitem">
-            <svg class="pillar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              <path d="M21 21v-2a4 4 0 0 0-3-3.87"/>
-            </svg>
-            <p class="pillar-title">Acompañamiento<br>cercano</p>
-            <p class="pillar-desc">Te guiamos, te motivamos, avanzamos contigo.</p>
-          </div>
-
-          <div class="pillar" role="listitem">
-            <svg class="pillar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
-              <polyline points="17 6 23 6 23 12"/>
-            </svg>
-            <p class="pillar-title">Mejora<br>constante</p>
-            <p class="pillar-desc">Evolucionamos cada día para que tú llegues más lejos.</p>
-          </div>
-
-        </div><div class="hero-cta-row">
-          <a href="contacto/contacto.html" class="btn-primary">
-            Agenda tu clase de diagnóstico
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="5" y1="12" x2="19" y2="12"/>
-              <polyline points="12 5 19 12 12 19"/>
-            </svg>
-          </a>
-          <a href="nosotros/nosotros.html" class="btn-secondary">Conócenos más</a>
+                <div class="modal-actions">
+                    <button type="button" id="btn-cancelar" class="btn btn-secondary">Cancelar</button>
+                    <button type="submit" class="btn btn-success">Guardar Registro</button>
+                </div>
+            </form>
         </div>
+    </div>
 
-        <div class="hero-stats" role="list">
-
-          <div class="stat" role="listitem">
-            <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
-              <path d="M6 12v5c3 3 9 3 12 0v-5"/>
-            </svg>
-            <div class="stat-info">
-              <span class="stat-value">17+</span>
-              <span class="stat-label">años de experiencia</span>
-            </div>
-          </div>
-
-          <div class="stat" role="listitem">
-            <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              <path d="M21 21v-2a4 4 0 0 0-3-3.87"/>
-            </svg>
-            <div class="stat-info">
-              <span class="stat-value">1,000+</span>
-              <span class="stat-label">alumnos impulsados</span>
-            </div>
-          </div>
-
-          <div class="stat" role="listitem">
-            <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-            <div class="stat-info">
-              <span class="stat-value">Excelencia</span>
-              <span class="stat-label">en cada clase</span>
-            </div>
-          </div>
-
-        </div></div><div class="hero-right">
-        <div class="hero-image-wrap">
-
-          <div class="hero-bg-shape" aria-hidden="true"></div>
-
-          <img
-            src="assets/img/chica.png"
-            alt="Estudiante de Personal English con libros, mirando hacia el futuro"
-            class="hero-photo"
-            width="480"
-            height="640"
-            loading="eager"
-          />
-
-          <div class="hero-quote" aria-hidden="true">
-            <span class="hero-quote-line"></span>
-            <p>
-              Creemos en ti.<br>
-              Creemos en tu potencial.<br>
-              Construyamos <strong>juntos<br>un futuro extraordinario.</strong>
-            </p>
-          </div>
-
-        </div>
-      </div></section>
-  </main>
-
-
-  <script>
-    const hamburger  = document.getElementById('hamburger');
-    const mobileMenu = document.getElementById('mobile-menu');
-
-    hamburger.addEventListener('click', () => {
-      const isOpen = mobileMenu.classList.toggle('open');
-      hamburger.setAttribute('aria-expanded', String(isOpen));
-      hamburger.setAttribute('aria-label', isOpen ? 'Cerrar menú' : 'Abrir menú');
-    });
-
-    // Cerrar al tocar un enlace
-    mobileMenu.querySelectorAll('a').forEach(link => {
-      link.addEventListener('click', () => {
-        mobileMenu.classList.remove('open');
-        hamburger.setAttribute('aria-expanded', 'false');
-        hamburger.setAttribute('aria-label', 'Abrir menú');
-      });
-    });
-  </script>
-
+    <script src="script.js"></script>
 </body>
 </html>

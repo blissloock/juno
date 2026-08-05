@@ -30,7 +30,7 @@ FRONTEND_ORIGIN=http://localhost
 
 **3. Levantar la Infraestructura**
 Una vez creado el archivo `.env`, abre tu terminal en la raíz del proyecto y ejecuta el siguiente comando para compilar el código y levantar los contenedores:
-`docker compose -f docker-compose_2.yml up --build -d`
+`docker compose -f docker-compose.yml up --build -d`
 
 **4. Verificar los Servicios**
 Si todo salió bien, los servicios estarán disponibles en las siguientes direcciones:
@@ -41,4 +41,4 @@ Si todo salió bien, los servicios estarán disponibles en las siguientes direcc
 ## 🛑 Detener el Proyecto
 
 Para apagar los contenedores sin borrar los datos de tu base de datos, ejecuta:
-`docker compose -f docker-compose_2.yml down`
+`docker compose -f docker-compose.yml down`
