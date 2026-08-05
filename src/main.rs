@@ -1,4 +1,4 @@
-use ProyectoIntegrador::{auth, db, netflow};
+use ProyectoIntegrador::{auth, db, netflow, nmap, snmp};
 
 use actix_cors::Cors;
 use actix_web::{http, middleware, web, App, HttpResponse, HttpServer, Responder};
@@ -33,10 +33,24 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
-    // TODO(equipo): mismo patrón para snmp::iniciar_monitor_snmp y el
-    // escáner de nmap cuando estén implementados. Ambos ya pueden usar
-    // db::insertar_evento(pool, "snmp" | "nmap", origen, &datos_json) para
-    // persistir, igual que hace netflow.rs.
+    // 4. Monitor SNMP en segundo plano (activo solo si SNMP_HOSTS está
+    //    configurada; si no, se queda inactivo y lo avisa en el log).
+    let pool_snmp = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = snmp::iniciar_monitor_snmp(pool_snmp).await {
+            log::error!("Error crítico en el monitor SNMP: {}", e);
+        }
+    });
+
+    // 5. Escáner Nmap periódico en segundo plano (opcional, activo solo
+    //    si NMAP_HOSTS está configurada). El escaneo bajo demanda desde
+    //    el frontend usa el endpoint POST /api/nmap/escanear, no este loop.
+    let pool_nmap = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = nmap::iniciar_escaner_nmap(pool_nmap).await {
+            log::error!("Error crítico en el escáner Nmap periódico: {}", e);
+        }
+    });
 
     let puerto: u16 = std::env::var("PORT")
         .ok()
@@ -85,6 +99,11 @@ async fn main() -> std::io::Result<()> {
             // el dashboard pida NetFlow / SNMP / Nmap desde un solo
             // endpoint. Protegido con JWT igual que /api/perfil.
             .route("/api/eventos", web::get().to(listar_eventos))
+            // Dispara un escaneo Nmap bajo demanda contra un host. Es lo
+            // que debería llamar el botón "Escanear Dispositivo (Auto)"
+            // del frontend. Protegido con JWT: escanear una IP arbitraria
+            // no debe estar disponible sin autenticación.
+            .route("/api/nmap/escanear", web::post().to(escanear_nmap))
         // TODO(equipo): agreguen aquí el resto de rutas del dashboard.
         // Para proteger cualquiera de ellas con login, basta con agregar
         // `usuario: auth::AuthenticatedUser` como parámetro del handler,
@@ -192,6 +211,29 @@ async fn listar_eventos(
         Err(e) => {
             log::error!("Error consultando eventos: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct EscanearRequest {
+    host: String,
+}
+
+/// Dispara un escaneo Nmap bajo demanda. El resultado ya queda guardado
+/// en `eventos` (vía nmap::escanear_host) y además se regresa directo en
+/// la respuesta para que el frontend pueda llenar los campos "Auto" del
+/// formulario sin tener que hacer una segunda consulta.
+async fn escanear_nmap(
+    pool: web::Data<sqlx::PgPool>,
+    datos: web::Json<EscanearRequest>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match nmap::escanear_host(&pool, &datos.host).await {
+        Ok(resultado) => HttpResponse::Ok().json(resultado),
+        Err(e) => {
+            log::error!("Error en escaneo Nmap contra {}: {}", datos.host, e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": e }))
         }
     }
 }
