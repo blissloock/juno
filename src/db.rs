@@ -5,6 +5,14 @@
 //! usuario dentro del string SQL. Esto es lo que previene la inyección
 //! SQL: el driver envía la consulta y los datos por separado al motor de
 //! base de datos, que nunca "interpreta" los datos como parte del comando.
+//!
+//! Nota de modelado: los datos de monitoreo (NetFlow, SNMP, Nmap) viven en
+//! una sola tabla tipo "colección" (`eventos`, ver migrations/0002_*.sql)
+//! con una columna `datos JSONB`. Es un modelo tipo documento (como una
+//! colección de Mongo) pero corriendo sobre Postgres/TimescaleDB, así que
+//! seguimos usando el mismo pool, las mismas migraciones versionadas y las
+//! mismas garantías transaccionales que ya teníamos. `usuarios` y `alertas`
+//! se quedan relacionales a propósito (ver el comentario en la migración).
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -45,6 +53,9 @@ pub async fn ejecutar_migraciones(pool: &PgPool) -> Result<(), sqlx::migrate::Mi
 // =====================================================================
 // Usuarios / autenticación
 // =====================================================================
+// Se queda relacional a propósito: el login necesita UNIQUE(username) y
+// tipos estrictos; convertir esto a JSONB no aportaría nada y sí quitaría
+// garantías (ver comentario en migrations/0002_documentos_json.sql).
 
 #[derive(Debug, Serialize)]
 pub struct Usuario {
@@ -107,118 +118,143 @@ pub async fn actualizar_ultimo_login(pool: &PgPool, usuario_id: i32) -> Result<(
 }
 
 // =====================================================================
-// Flujos NetFlow
+// Eventos (colección JSONB: NetFlow / SNMP / Nmap)
 // =====================================================================
 
-pub struct NuevoFlujoNetflow {
-    pub ip_origen: String,
-    pub ip_destino: String,
-    pub puerto_origen: Option<i32>,
-    pub puerto_destino: Option<i32>,
-    pub protocolo: Option<i16>,
-    pub bytes: i64,
-    pub paquetes: i64,
+/// Representa un documento tal cual sale de la tabla `eventos`.
+/// `datos` es JSON libre: su forma depende de `tipo`.
+#[derive(Debug, Serialize)]
+pub struct Evento {
+    pub id: i64,
+    pub tiempo: DateTime<Utc>,
+    pub tipo: String,
+    pub origen: Option<String>,
+    pub datos: serde_json::Value,
 }
 
-pub async fn insertar_flujo_netflow(
+/// Inserta un documento nuevo en la colección `eventos`.
+///
+/// `tipo` identifica la "colección lógica" ('netflow' | 'snmp' | 'nmap'),
+/// `origen` es el host/IP (se indexa aparte para consultas rápidas por
+/// dispositivo), y `datos` es el documento JSON completo: puede tener
+/// cualquier estructura, no hace falta migrar el esquema para agregar un
+/// campo nuevo.
+pub async fn insertar_evento(
     pool: &PgPool,
-    flujo: &NuevoFlujoNetflow,
+    tipo: &str,
+    origen: Option<&str>,
+    datos: &serde_json::Value,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO flujos_netflow
-            (ip_origen, ip_destino, puerto_origen, puerto_destino, protocolo, bytes, paquetes)
-         VALUES ($1::inet, $2::inet, $3, $4, $5, $6, $7)",
-    )
-    .bind(&flujo.ip_origen)
-    .bind(&flujo.ip_destino)
-    .bind(flujo.puerto_origen)
-    .bind(flujo.puerto_destino)
-    .bind(flujo.protocolo)
-    .bind(flujo.bytes)
-    .bind(flujo.paquetes)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO eventos (tipo, origen, datos) VALUES ($1, $2, $3)")
+        .bind(tipo)
+        .bind(origen)
+        .bind(datos)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
-pub struct FlujoNetflow {
-    pub tiempo: DateTime<Utc>,
-    pub ip_origen: String,
-    pub ip_destino: String,
-    pub bytes: i64,
-}
-
-/// Últimos N flujos, para el dashboard.
-pub async fn ultimos_flujos(pool: &PgPool, limite: i64) -> Result<Vec<FlujoNetflow>, sqlx::Error> {
+/// Últimos N eventos de un tipo dado, para el dashboard.
+/// Límite duro adicional: nunca se devuelven más de 1000 filas en una sola
+/// respuesta, sin importar lo que pida el cliente.
+pub async fn ultimos_eventos_por_tipo(
+    pool: &PgPool,
+    tipo: &str,
+    limite: i64,
+) -> Result<Vec<Evento>, sqlx::Error> {
     let filas = sqlx::query(
-        "SELECT tiempo, ip_origen::text, ip_destino::text, bytes
-         FROM flujos_netflow ORDER BY tiempo DESC LIMIT $1",
+        "SELECT id, tiempo, tipo, origen, datos
+         FROM eventos
+         WHERE tipo = $1
+         ORDER BY tiempo DESC
+         LIMIT $2",
     )
-    // Límite duro adicional: sin importar lo que pida el cliente, nunca
-    // se devuelven más de 1000 filas en una sola respuesta (protege
-    // memoria/ancho de banda contra un parámetro abusivo).
+    .bind(tipo)
     .bind(limite.clamp(1, 1000))
     .fetch_all(pool)
     .await?;
 
     Ok(filas
         .into_iter()
-        .map(|f| FlujoNetflow {
+        .map(|f| Evento {
+            id: f.get("id"),
             tiempo: f.get("tiempo"),
-            ip_origen: f.get("ip_origen"),
-            ip_destino: f.get("ip_destino"),
-            bytes: f.get("bytes"),
+            tipo: f.get("tipo"),
+            origen: f.get("origen"),
+            datos: f.get("datos"),
+        })
+        .collect())
+}
+
+/// Últimos N eventos de un host/origen específico, sin importar el tipo.
+/// Útil para la vista "Estado del dispositivo" del frontend.
+pub async fn ultimos_eventos_por_origen(
+    pool: &PgPool,
+    origen: &str,
+    limite: i64,
+) -> Result<Vec<Evento>, sqlx::Error> {
+    let filas = sqlx::query(
+        "SELECT id, tiempo, tipo, origen, datos
+         FROM eventos
+         WHERE origen = $1
+         ORDER BY tiempo DESC
+         LIMIT $2",
+    )
+    .bind(origen)
+    .bind(limite.clamp(1, 1000))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(filas
+        .into_iter()
+        .map(|f| Evento {
+            id: f.get("id"),
+            tiempo: f.get("tiempo"),
+            tipo: f.get("tipo"),
+            origen: f.get("origen"),
+            datos: f.get("datos"),
+        })
+        .collect())
+}
+
+/// Busca eventos cuyo documento JSON contenga el filtro dado.
+/// Ejemplo de uso desde main.rs: `datos @> {"puerto_destino": 443}` para
+/// encontrar todos los flujos NetFlow hacia el puerto 443.
+/// Esto es el equivalente directo a un `.find({...})` de Mongo.
+pub async fn buscar_eventos_por_filtro_json(
+    pool: &PgPool,
+    tipo: &str,
+    filtro: &serde_json::Value,
+    limite: i64,
+) -> Result<Vec<Evento>, sqlx::Error> {
+    let filas = sqlx::query(
+        "SELECT id, tiempo, tipo, origen, datos
+         FROM eventos
+         WHERE tipo = $1 AND datos @> $2
+         ORDER BY tiempo DESC
+         LIMIT $3",
+    )
+    .bind(tipo)
+    .bind(filtro)
+    .bind(limite.clamp(1, 1000))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(filas
+        .into_iter()
+        .map(|f| Evento {
+            id: f.get("id"),
+            tiempo: f.get("tiempo"),
+            tipo: f.get("tipo"),
+            origen: f.get("origen"),
+            datos: f.get("datos"),
         })
         .collect())
 }
 
 // =====================================================================
-// Métricas SNMP
-// =====================================================================
-
-pub async fn insertar_metrica_snmp(
-    pool: &PgPool,
-    host: &str,
-    cpu_pct: f32,
-    ram_pct: f32,
-    interfaz: Option<&str>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO metricas_snmp (host, cpu_pct, ram_pct, interfaz) VALUES ($1, $2, $3, $4)",
-    )
-    .bind(host)
-    .bind(cpu_pct)
-    .bind(ram_pct)
-    .bind(interfaz)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-// =====================================================================
-// Escaneos Nmap
-// =====================================================================
-
-pub async fn insertar_escaneo_nmap(
-    pool: &PgPool,
-    host: &str,
-    puertos_abiertos: &serde_json::Value,
-    so_detectado: Option<&str>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO escaneos_nmap (host, puertos_abiertos, so_detectado) VALUES ($1, $2, $3)",
-    )
-    .bind(host)
-    .bind(puertos_abiertos)
-    .bind(so_detectado)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-// =====================================================================
-// Alertas
+// Alertas (se queda relacional: su forma no cambia y necesita filtrar
+// rápido por "resuelta", algo que una columna normal hace mejor que JSONB)
 // =====================================================================
 
 pub async fn crear_alerta(

@@ -34,7 +34,9 @@ async fn main() -> std::io::Result<()> {
     });
 
     // TODO(equipo): mismo patrón para snmp::iniciar_monitor_snmp y el
-    // escáner de nmap cuando estén implementados.
+    // escáner de nmap cuando estén implementados. Ambos ya pueden usar
+    // db::insertar_evento(pool, "snmp" | "nmap", origen, &datos_json) para
+    // persistir, igual que hace netflow.rs.
 
     let puerto: u16 = std::env::var("PORT")
         .ok()
@@ -79,6 +81,10 @@ async fn main() -> std::io::Result<()> {
             // Ejemplo de ruta YA protegida con JWT (ver el parámetro
             // `usuario: auth::AuthenticatedUser` en el handler `perfil`).
             .route("/api/perfil", web::get().to(perfil))
+            // Consulta genérica de la colección JSONB `eventos`, para que
+            // el dashboard pida NetFlow / SNMP / Nmap desde un solo
+            // endpoint. Protegido con JWT igual que /api/perfil.
+            .route("/api/eventos", web::get().to(listar_eventos))
         // TODO(equipo): agreguen aquí el resto de rutas del dashboard.
         // Para proteger cualquiera de ellas con login, basta con agregar
         // `usuario: auth::AuthenticatedUser` como parámetro del handler,
@@ -150,4 +156,42 @@ async fn perfil(usuario: auth::AuthenticatedUser) -> impl Responder {
         "usuario_id": usuario.usuario_id,
         "rol": usuario.rol,
     }))
+}
+
+#[derive(Deserialize)]
+struct EventosQuery {
+    /// 'netflow' | 'snmp' | 'nmap'. Si se omite, hay que pasar `origen`.
+    tipo: Option<String>,
+    /// Filtra por host/IP en vez de por tipo (o junto con tipo).
+    origen: Option<String>,
+    /// Cuántos documentos devolver (se limita a 1000 en db.rs de todas formas).
+    limite: Option<i64>,
+}
+
+/// Consulta genérica sobre la colección `eventos` (JSONB). Ejemplos:
+///   GET /api/eventos?tipo=netflow&limite=50
+///   GET /api/eventos?origen=192.168.1.1
+async fn listar_eventos(
+    pool: web::Data<sqlx::PgPool>,
+    query: web::Query<EventosQuery>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    let limite = query.limite.unwrap_or(100);
+
+    let resultado = match (&query.tipo, &query.origen) {
+        (_, Some(origen)) => db::ultimos_eventos_por_origen(&pool, origen, limite).await,
+        (Some(tipo), None) => db::ultimos_eventos_por_tipo(&pool, tipo, limite).await,
+        (None, None) => {
+            return HttpResponse::BadRequest()
+                .json(serde_json::json!({ "error": "Debes indicar 'tipo' u 'origen'" }))
+        }
+    };
+
+    match resultado {
+        Ok(eventos) => HttpResponse::Ok().json(eventos),
+        Err(e) => {
+            log::error!("Error consultando eventos: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
 }
