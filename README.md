@@ -12,7 +12,7 @@ Para ejecutar este proyecto en tu máquina local, necesitas tener instalado:
 
 **1. Clonar el repositorio**
 Descarga el código a tu computadora ejecutando:
-`git clone https://github.com/TU_USUARIO/proyecto-juno.git`
+`git clone https://github.com/blissloock/juno`
 
 **2. Configurar las Variables de Entorno**
 Por seguridad, las contraseñas no se suben a GitHub. Crea un archivo llamado exactamente `.env` en la carpeta raíz del proyecto y solicita las credenciales al administrador del equipo para llenarlo. 
