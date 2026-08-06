@@ -542,8 +542,229 @@ td.ip-cell{ font-family: var(--font-mono); color: var(--text-muted); font-size: 
 @keyframes toast-in{ from{ opacity:0; transform: translate(-50%, 8px);} to{ opacity:1; transform: translate(-50%,0);} }
 
 /* ============================================================
-   Responsive
+   Barra de herramientas, búsqueda, filtros y acciones masivas
    ============================================================ */
+.controls-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  flex: 1;
+  min-width: 240px;
+  color: var(--text-dim);
+}
+
+.search-box input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13.5px;
+  width: 100%;
+}
+
+.search-box input:focus {
+  outline: none;
+}
+
+.filter-tabs {
+  display: flex;
+  background: var(--panel-alt);
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  gap: 2px;
+  border: 1px solid var(--border-soft);
+}
+
+.filter-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.filter-btn:hover {
+  color: var(--text);
+}
+
+.filter-btn.active {
+  background: var(--panel-raised);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+.bulk-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Checkbox personalizado */
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* ============================================================
+   NetFlow Analytics Grid & Canvas Graph
+   ============================================================ */
+.netflow-analytics-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 960px) {
+  .netflow-analytics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.netflow-card {
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 18px;
+}
+
+.netflow-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.netflow-card-header h3 {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.live-tag {
+  font-size: 11px;
+  color: var(--online);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(46, 213, 115, 0.1);
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+
+.canvas-wrapper {
+  position: relative;
+  width: 100%;
+  height: 200px;
+}
+
+.canvas-wrapper canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+.entropy-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.entropy-score {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.entropy-val {
+  font-family: var(--font-mono);
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.entropy-unit {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.entropy-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.top-talkers {
+  margin-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+.top-talkers h4 {
+  font-size: 12.5px;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+
+.talkers-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.talkers-list li {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 8px;
+  background: var(--panel-alt);
+  border-radius: 4px;
+}
+
+.talkers-list .ip {
+  color: var(--accent-light);
+}
+
+.talkers-list .flujos {
+  color: var(--text-dim);
+}
+
+.talkers-list .empty-text {
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-style: italic;
+  justify-content: center;
+}
+
+/* Responsive */
 @media (max-width: 900px){
   #panel-principal{ grid-template-columns: 1fr; }
   .sidebar{

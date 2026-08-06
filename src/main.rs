@@ -118,19 +118,18 @@ async fn main() -> std::io::Result<()> {
             // CRUD del catálogo de dispositivos (ver migrations/0003_*).
             .route("/api/dispositivos", web::get().to(listar_dispositivos))
             .route("/api/dispositivos", web::post().to(crear_dispositivo))
+            .route("/api/dispositivos/eliminar-masivo", web::post().to(eliminar_dispositivos_masivo))
+            .route("/api/dispositivos/limpiar-inactivos", web::post().to(limpiar_dispositivos_inactivos))
             .route("/api/dispositivos/{id}", web::put().to(actualizar_dispositivo))
             .route("/api/dispositivos/{id}", web::delete().to(eliminar_dispositivo))
             // Ping real a un dispositivo ya registrado: actualiza su
             // estado en la base de datos y genera una alerta automática
             // si hubo un cambio (ej. online -> offline).
             .route("/api/dispositivos/{id}/ping", web::post().to(ping_dispositivo))
-            // Lectura del historial de alertas (la tabla ya existía desde
-            // el inicio; lo que faltaba era exponerla vía API).
+            // Lectura del historial de alertas
             .route("/api/alertas", web::get().to(listar_alertas))
-        // TODO(equipo): agreguen aquí el resto de rutas del dashboard.
-        // Para proteger cualquiera de ellas con login, basta con agregar
-        // `usuario: auth::AuthenticatedUser` como parámetro del handler,
-        // igual que en `perfil`.
+            // Gráficas y estadísticas de NetFlow / Entropía de Red
+            .route("/api/netflow/grafica", web::get().to(grafica_netflow))
     })
     .bind(("0.0.0.0", puerto))?
     .run()
@@ -477,3 +476,55 @@ async fn listar_alertas(
         }
     }
 }
+
+#[derive(Deserialize)]
+struct EliminarMasivoRequest {
+    ids: Vec<i32>,
+}
+
+async fn eliminar_dispositivos_masivo(
+    pool: web::Data<sqlx::PgPool>,
+    datos: web::Json<EliminarMasivoRequest>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match db::eliminar_dispositivos_masivo(&pool, &datos.ids).await {
+        Ok(eliminados) => HttpResponse::Ok().json(serde_json::json!({
+            "mensaje": format!("Se eliminaron {} dispositivos correctamente", eliminados),
+            "eliminados": eliminados
+        })),
+        Err(e) => {
+            log::error!("Error al eliminar dispositivos masivamente: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
+}
+
+async fn limpiar_dispositivos_inactivos(
+    pool: web::Data<sqlx::PgPool>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match db::eliminar_dispositivos_offline(&pool).await {
+        Ok(eliminados) => HttpResponse::Ok().json(serde_json::json!({
+            "mensaje": format!("Se eliminaron {} dispositivos inactivos/offline", eliminados),
+            "eliminados": eliminados
+        })),
+        Err(e) => {
+            log::error!("Error al limpiar dispositivos inactivos: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
+}
+
+async fn grafica_netflow(
+    pool: web::Data<sqlx::PgPool>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match db::obtener_estadisticas_netflow(&pool).await {
+        Ok(stats) => HttpResponse::Ok().json(stats),
+        Err(e) => {
+            log::error!("Error al obtener estadísticas NetFlow: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
+}
+

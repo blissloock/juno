@@ -420,6 +420,110 @@ pub async fn eliminar_dispositivo(pool: &PgPool, id: i32) -> Result<bool, sqlx::
     Ok(resultado.rows_affected() > 0)
 }
 
+pub async fn eliminar_dispositivos_masivo(pool: &PgPool, ids: &[i32]) -> Result<u64, sqlx::Error> {
+    let resultado = sqlx::query("DELETE FROM dispositivos WHERE id = ANY($1)")
+        .bind(ids)
+        .execute(pool)
+        .await?;
+    Ok(resultado.rows_affected())
+}
+
+pub async fn eliminar_dispositivos_offline(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let resultado = sqlx::query("DELETE FROM dispositivos WHERE estado = 'offline'")
+        .execute(pool)
+        .await?;
+    Ok(resultado.rows_affected())
+}
+
+#[derive(Debug, Serialize)]
+pub struct PuntosTraficoNetflow {
+    pub hora: String,
+    pub cantidad_flujos: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HostNetflowTop {
+    pub origen: String,
+    pub flujos: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EstadisticasNetflow {
+    pub serie_tiempo: Vec<PuntosTraficoNetflow>,
+    pub top_hosts: Vec<HostNetflowTop>,
+    pub total_flujos: i64,
+    pub entropia_red: f64,
+}
+
+pub async fn obtener_estadisticas_netflow(pool: &PgPool) -> Result<EstadisticasNetflow, sqlx::Error> {
+    let filas_serie = sqlx::query(
+        "SELECT to_char(date_trunc('minute', tiempo), 'HH24:MI') as hora, COUNT(*) as cantidad
+         FROM eventos
+         WHERE tipo = 'netflow' AND tiempo >= NOW() - INTERVAL '1 hour'
+         GROUP BY date_trunc('minute', tiempo)
+         ORDER BY date_trunc('minute', tiempo) ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let serie_tiempo = filas_serie
+        .into_iter()
+        .map(|f| PuntosTraficoNetflow {
+            hora: f.get("hora"),
+            cantidad_flujos: f.get("cantidad"),
+        })
+        .collect::<Vec<_>>();
+
+    let filas_hosts = sqlx::query(
+        "SELECT COALESCE(origen, 'Desconocido') as origen, COUNT(*) as flujos
+         FROM eventos
+         WHERE tipo = 'netflow'
+         GROUP BY origen
+         ORDER BY flujos DESC
+         LIMIT 5",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let top_hosts = filas_hosts
+        .into_iter()
+        .map(|f| HostNetflowTop {
+            origen: f.get("origen"),
+            flujos: f.get("flujos"),
+        })
+        .collect::<Vec<_>>();
+
+    let fila_total: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM eventos WHERE tipo = 'netflow'")
+        .fetch_one(pool)
+        .await?;
+
+    let total_flujos = fila_total.0;
+
+    let mut entropia = 0.0f64;
+    if total_flujos > 0 {
+        let filas_distribucion = sqlx::query(
+            "SELECT COUNT(*) as flujos FROM eventos WHERE tipo = 'netflow' GROUP BY origen",
+        )
+        .fetch_all(pool)
+        .await?;
+
+        for f in filas_distribucion {
+            let flujos: i64 = f.get("flujos");
+            let p = flujos as f64 / total_flujos as f64;
+            if p > 0.0 {
+                entropia -= p * p.log2();
+            }
+        }
+    }
+
+    Ok(EstadisticasNetflow {
+        serie_tiempo,
+        top_hosts,
+        total_flujos,
+        entropia_red: (entropia * 100.0).round() / 100.0,
+    })
+}
+
 /// Actualiza solo el estado de un dispositivo (usado tras un ping).
 /// `cpu_pct`/`ram_pct`/`temp_c` no se tocan aquí porque ese dato viene de
 /// SNMP, no de un ping -- ver snmp.rs para esa parte.
@@ -440,3 +544,4 @@ pub async fn actualizar_estado_dispositivo(
 
     Ok(fila.map(fila_a_dispositivo))
 }
+

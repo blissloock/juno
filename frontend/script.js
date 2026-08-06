@@ -1,23 +1,20 @@
 /* ============================================================
-   NetPulse — lógica del panel de monitoreo
-   Conectado al backend real (Rust/Actix) vía fetch(). Ya no simula
-   datos con Math.random(): todo lo que se ve viene de la API.
+   NetPulse — lógica del panel de monitoreo y análisis de red
+   Conectado al backend real (Rust/Actix) vía fetch().
    ============================================================ */
 
 (function () {
   'use strict';
 
-  // El backend siempre corre en el puerto 8080. En vez de fijar
-  // "localhost" a mano, se usa el mismo host desde el que se cargó esta
-  // página (window.location.hostname) -- así funciona igual si entras
-  // por http://localhost o por la IP de la máquina en la red local
-  // (ej. http://192.168.1.50), sin tener que tocar este archivo.
   const API_BASE = window.API_BASE || `http://${window.location.hostname}:8080`;
   const TOKEN_KEY = 'netpulse_token';
 
-  // ---------- Estado de la aplicación (se llena desde el backend) ----------
+  // ---------- Estado de la aplicación ----------
   let dispositivos = [];
   let alertas = [];
+  let idsSeleccionados = new Set();
+  let filtroEstado = 'todos';
+  let textoBusqueda = '';
   let seleccionIndex = null;
   let alertasNoLeidas = 0;
   let ultimoConteoAlertas = 0;
@@ -56,6 +53,13 @@
 
   const navBtns = document.querySelectorAll('.nav-btn');
   const tabs = document.querySelectorAll('.tab-content');
+
+  const inputBusqueda = document.getElementById('input-busqueda');
+  const filterBtns = document.querySelectorAll('.filter-btn');
+  const btnEliminarMasivo = document.getElementById('btn-eliminar-masivo');
+  const countSeleccionados = document.getElementById('count-seleccionados');
+  const btnLimpiarInactivos = document.getElementById('btn-limpiar-inactivos');
+  const chkSelectAll = document.getElementById('chk-select-all');
 
   const tablaBody = document.querySelector('#tabla-dispositivos tbody');
   const emptyDispositivos = document.getElementById('empty-dispositivos');
@@ -161,9 +165,6 @@
     panelPrincipal.classList.remove('hidden');
     cargarTodo();
     if (intervaloActualizacion) clearInterval(intervaloActualizacion);
-    // "Tiempo real" vía polling cada 20s. Para este alcance de proyecto
-    // no hace falta WebSockets; si más adelante se necesita push real,
-    // este es el punto donde se reemplazaría por una conexión ws.
     intervaloActualizacion = setInterval(cargarTodo, 20000);
   }
 
@@ -180,7 +181,6 @@
 
   btnCerrarSesion.addEventListener('click', () => cerrarSesion());
 
-  // Si ya había una sesión guardada (recarga de página), entra directo.
   if (localStorage.getItem(TOKEN_KEY)) {
     entrarAlPanel();
   }
@@ -195,6 +195,9 @@
       if (target === 'sec-alertas') {
         alertasNoLeidas = 0;
         actualizarBadgeAlertas();
+      }
+      if (target === 'sec-estado') {
+        cargarEstadisticasNetflow();
       }
     });
   });
@@ -217,7 +220,11 @@
 
   // ---------- Carga de datos reales ----------
   async function cargarTodo() {
-    await Promise.all([cargarDispositivos(), cargarAlertas()]);
+    await Promise.all([
+      cargarDispositivos(),
+      cargarAlertas(),
+      cargarEstadisticasNetflow()
+    ]);
   }
 
   async function cargarDispositivos() {
@@ -225,6 +232,11 @@
       const respuesta = await apiFetch('/api/dispositivos');
       if (!respuesta.ok) throw new Error('No se pudieron cargar los dispositivos');
       dispositivos = await respuesta.json();
+
+      // Limpiar IDs seleccionados que ya no existan en la lista devuelta
+      const idsActuales = new Set(dispositivos.map(d => d.id));
+      idsSeleccionados = new Set([...idsSeleccionados].filter(id => idsActuales.has(id)));
+
       renderTabla();
       renderMetricas();
     } catch (e) {
@@ -259,17 +271,56 @@
     }
   }
 
+  // ---------- Búsqueda y Filtros de dispositivos ----------
+  if (inputBusqueda) {
+    inputBusqueda.addEventListener('input', (e) => {
+      textoBusqueda = e.target.value.trim();
+      renderTabla();
+    });
+  }
+
+  filterBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      filterBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filtroEstado = btn.dataset.filter;
+      renderTabla();
+    });
+  });
+
   // ---------- Render: tabla de dispositivos ----------
+  function obtenerDispositivosFiltrados() {
+    return dispositivos.filter(d => {
+      const cumpleEstado = filtroEstado === 'todos' || d.estado === filtroEstado;
+      const q = textoBusqueda.toLowerCase();
+      const cumpleBusqueda = !q ||
+        d.nombre.toLowerCase().includes(q) ||
+        d.ip.toLowerCase().includes(q) ||
+        d.tipo.toLowerCase().includes(q);
+      return cumpleEstado && cumpleBusqueda;
+    });
+  }
+
   function renderTabla() {
     tablaBody.innerHTML = '';
-    emptyDispositivos.classList.toggle('hidden', dispositivos.length > 0);
+    const filtrados = obtenerDispositivosFiltrados();
 
-    dispositivos.forEach((d, i) => {
+    emptyDispositivos.classList.toggle('hidden', filtrados.length > 0);
+
+    if (chkSelectAll) {
+      chkSelectAll.checked = filtrados.length > 0 && filtrados.every(d => idsSeleccionados.has(d.id));
+    }
+
+    filtrados.forEach(d => {
       const tr = document.createElement('tr');
-      tr.dataset.index = i;
-      if (i === seleccionIndex) tr.classList.add('selected');
+      tr.dataset.id = d.id;
+      const estaSeleccionado = idsSeleccionados.has(d.id);
+      if (estaSeleccionado) tr.classList.add('selected');
+
       tr.innerHTML = `
-        <td class="col-select"><span class="row-radio"></span></td>
+        <td class="col-select" style="text-align:center;">
+          <input type="checkbox" class="chk-row" data-id="${d.id}" ${estaSeleccionado ? 'checked' : ''}>
+        </td>
         <td>${escapeHtml(d.nombre)}</td>
         <td>${escapeHtml(d.tipo)}</td>
         <td class="ip-cell">${escapeHtml(d.ip)}</td>
@@ -280,18 +331,56 @@
           </span>
         </td>
       `;
-      tr.addEventListener('click', () => seleccionarFila(i));
+
+      const chk = tr.querySelector('.chk-row');
+      chk.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (chk.checked) idsSeleccionados.add(d.id);
+        else idsSeleccionados.delete(d.id);
+        actualizarAccionesMasivas();
+        tr.classList.toggle('selected', chk.checked);
+      });
+
+      tr.addEventListener('click', () => {
+        if (idsSeleccionados.has(d.id)) {
+          idsSeleccionados.delete(d.id);
+          chk.checked = false;
+        } else {
+          idsSeleccionados.add(d.id);
+          chk.checked = true;
+        }
+        actualizarAccionesMasivas();
+        tr.classList.toggle('selected', chk.checked);
+      });
+
       tablaBody.appendChild(tr);
     });
 
     actualizarStats();
+    actualizarAccionesMasivas();
   }
 
-  function seleccionarFila(i) {
-    seleccionIndex = (seleccionIndex === i) ? null : i;
+  if (chkSelectAll) {
+    chkSelectAll.addEventListener('change', (e) => {
+      const filtrados = obtenerDispositivosFiltrados();
+      if (e.target.checked) {
+        filtrados.forEach(d => idsSeleccionados.add(d.id));
+      } else {
+        filtrados.forEach(d => idsSeleccionados.delete(d.id));
+      }
+      renderTabla();
+    });
+  }
+
+  function actualizarAccionesMasivas() {
+    const cant = idsSeleccionados.size;
+    if (countSeleccionados) countSeleccionados.textContent = cant;
+    if (btnEliminarMasivo) btnEliminarMasivo.disabled = cant === 0;
+
+    // Acción para editar individualmente la primera fila seleccionada
+    seleccionIndex = cant === 1 ? dispositivos.findIndex(d => idsSeleccionados.has(d.id)) : null;
     btnReemplazar.disabled = seleccionIndex === null;
-    btnEliminar.disabled = seleccionIndex === null;
-    renderTabla();
+    btnEliminar.disabled = cant === 0;
   }
 
   function actualizarStats() {
@@ -301,7 +390,172 @@
     statOffline.textContent = dispositivos.filter(d => d.estado === 'offline').length;
   }
 
-  // ---------- Render: métricas ----------
+  // ---------- Eliminación masiva e inactivos ----------
+  if (btnEliminarMasivo) {
+    btnEliminarMasivo.addEventListener('click', async () => {
+      const cant = idsSeleccionados.size;
+      if (cant === 0) return;
+
+      if (!confirm(`¿Estás seguro de eliminar los ${cant} dispositivo(s) seleccionados del monitoreo?`)) return;
+
+      try {
+        const ids = Array.from(idsSeleccionados);
+        const respuesta = await apiFetch('/api/dispositivos/eliminar-masivo', {
+          method: 'POST',
+          body: JSON.stringify({ ids }),
+        });
+        const datos = await respuesta.json();
+        if (!respuesta.ok) throw new Error(datos.error || 'No se pudieron eliminar los dispositivos');
+
+        idsSeleccionados.clear();
+        mostrarToast(datos.mensaje || `Se eliminaron ${cant} dispositivos`);
+        await cargarDispositivos();
+      } catch (e) {
+        mostrarToast(e.message);
+      }
+    });
+  }
+
+  if (btnLimpiarInactivos) {
+    btnLimpiarInactivos.addEventListener('click', async () => {
+      const offlineCount = dispositivos.filter(d => d.estado === 'offline').length;
+      if (offlineCount === 0) {
+        mostrarToast('No hay dispositivos inactivos (Offline) para limpiar');
+        return;
+      }
+
+      if (!confirm(`¿Eliminar todos los ${offlineCount} dispositivos desconectados (Offline) de la lista?`)) return;
+
+      try {
+        const respuesta = await apiFetch('/api/dispositivos/limpiar-inactivos', { method: 'POST' });
+        const datos = await respuesta.json();
+        if (!respuesta.ok) throw new Error(datos.error || 'No se pudieron limpiar los inactivos');
+
+        idsSeleccionados.clear();
+        mostrarToast(datos.mensaje || 'Inactivos eliminados correctamente');
+        await cargarDispositivos();
+      } catch (e) {
+        mostrarToast(e.message);
+      }
+    });
+  }
+
+  // ---------- Render: métricas & NetFlow ----------
+  async function cargarEstadisticasNetflow() {
+    try {
+      const respuesta = await apiFetch('/api/netflow/grafica');
+      if (!respuesta.ok) return;
+      const datos = await respuesta.json();
+
+      const valEntropia = document.getElementById('val-entropia');
+      if (valEntropia) valEntropia.textContent = (datos.entropia_red || 0).toFixed(2);
+
+      const listaTalkers = document.getElementById('lista-top-talkers');
+      if (listaTalkers) {
+        listaTalkers.innerHTML = '';
+        if (datos.top_hosts && datos.top_hosts.length > 0) {
+          datos.top_hosts.forEach(h => {
+            const li = document.createElement('li');
+            li.innerHTML = `<span class="ip">${escapeHtml(h.origen)}</span><span class="flujos">${h.flujos} flujos</span>`;
+            listaTalkers.appendChild(li);
+          });
+        } else {
+          listaTalkers.innerHTML = '<li class="empty-text">Sin datos de flujos en la red</li>';
+        }
+      }
+
+      dibujarGraficaNetflow(datos.serie_tiempo || []);
+    } catch (e) {
+      if (e.message !== 'No autenticado') console.error('Error al cargar gráfica NetFlow:', e);
+    }
+  }
+
+  function dibujarGraficaNetflow(puntos) {
+    const canvas = document.getElementById('canvas-netflow');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    canvas.width = rect.width * (window.devicePixelRatio || 1);
+    canvas.height = rect.height * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+
+    const w = rect.width;
+    const h = rect.height;
+
+    ctx.clearRect(0, 0, w, h);
+
+    if (puntos.length === 0) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '13px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Escuchando flujos NetFlow en tiempo real (puerto UDP 2055)...', w / 2, h / 2);
+      return;
+    }
+
+    const maxVal = Math.max(...puntos.map(p => p.cantidad_flujos), 5);
+    const padding = 24;
+    const graphW = w - padding * 2;
+    const graphH = h - padding * 2;
+
+    // Grid de fondo
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 3; i++) {
+      const y = padding + (graphH / 3) * i;
+      ctx.beginPath();
+      ctx.moveTo(padding, y);
+      ctx.lineTo(w - padding, y);
+      ctx.stroke();
+    }
+
+    const coords = puntos.map((p, idx) => {
+      const x = padding + (idx / Math.max(puntos.length - 1, 1)) * graphW;
+      const y = h - padding - (p.cantidad_flujos / maxVal) * graphH;
+      return { x, y, hora: p.hora, val: p.cantidad_flujos };
+    });
+
+    const grad = ctx.createLinearGradient(0, padding, 0, h - padding);
+    grad.addColorStop(0, 'rgba(76, 141, 255, 0.35)');
+    grad.addColorStop(1, 'rgba(76, 141, 255, 0.0)');
+
+    ctx.beginPath();
+    ctx.moveTo(coords[0].x, h - padding);
+    coords.forEach(c => ctx.lineTo(c.x, c.y));
+    ctx.lineTo(coords[coords.length - 1].x, h - padding);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    coords.forEach((c, idx) => {
+      if (idx === 0) ctx.moveTo(c.x, c.y);
+      else ctx.lineTo(c.x, c.y);
+    });
+    ctx.strokeStyle = '#4C8DFF';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    coords.forEach((c, idx) => {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#2ED573';
+      ctx.fill();
+      ctx.strokeStyle = '#060A12';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      if (idx % Math.ceil(coords.length / 6) === 0) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '10px JetBrains Mono, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(c.hora, c.x, h - 4);
+      }
+    });
+  }
+
   function renderMetricas() {
     gridEstado.innerHTML = '';
     emptyEstado.classList.toggle('hidden', dispositivos.length > 0);
@@ -432,18 +686,27 @@
   modal.addEventListener('click', (e) => { if (e.target === modal) cerrarModal(); });
 
   btnEliminar.addEventListener('click', async () => {
-    if (seleccionIndex === null) return;
-    const d = dispositivos[seleccionIndex];
-    if (!confirm(`¿Eliminar "${d.nombre}" (${d.ip}) del monitoreo?`)) return;
+    if (idsSeleccionados.size === 0 && seleccionIndex === null) return;
+
+    const ids = idsSeleccionados.size > 0
+      ? Array.from(idsSeleccionados)
+      : [dispositivos[seleccionIndex].id];
+
+    if (!confirm(`¿Eliminar los ${ids.length} dispositivo(s) seleccionado(s)?`)) return;
 
     try {
-      const respuesta = await apiFetch(`/api/dispositivos/${d.id}`, { method: 'DELETE' });
-      if (!respuesta.ok && respuesta.status !== 204) throw new Error('No se pudo eliminar el dispositivo');
+      const respuesta = await apiFetch('/api/dispositivos/eliminar-masivo', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      });
+      const datos = await respuesta.json();
+      if (!respuesta.ok) throw new Error(datos.error || 'No se pudieron eliminar los dispositivos');
 
+      idsSeleccionados.clear();
       seleccionIndex = null;
       btnReemplazar.disabled = true;
       btnEliminar.disabled = true;
-      mostrarToast('Dispositivo eliminado');
+      mostrarToast(datos.mensaje || 'Dispositivo(s) eliminado(s)');
       await cargarDispositivos();
     } catch (e) {
       mostrarToast(e.message);
@@ -472,8 +735,6 @@
 
       const enLinea = datos.estado_host === 'up';
       txtEstado.value = enLinea ? 'En línea' : 'Desconectado';
-      // CPU/RAM/Temperatura no salen de un escaneo de puertos -- eso
-      // requiere SNMP (ver hint del panel de Métricas).
       txtCpu.value = 'N/D (requiere SNMP)';
       txtRam.value = 'N/D (requiere SNMP)';
       txtTemp.value = 'N/D (requiere SNMP)';
@@ -525,7 +786,10 @@
 
   // ---------- Probar conexión (ping real) ----------
   btnPing.addEventListener('click', async () => {
-    const objetivo = seleccionIndex !== null ? [dispositivos[seleccionIndex]] : dispositivos;
+    const objetivo = idsSeleccionados.size > 0
+      ? dispositivos.filter(d => idsSeleccionados.has(d.id))
+      : (seleccionIndex !== null ? [dispositivos[seleccionIndex]] : dispositivos);
+
     if (objetivo.length === 0) {
       mostrarToast('No hay dispositivos para probar');
       return;
@@ -543,7 +807,7 @@
           })
         )
       );
-      await cargarTodo(); // trae estados nuevos y cualquier alerta generada en el backend
+      await cargarTodo();
       mostrarToast(`Ping completado (${objetivo.length} equipo${objetivo.length > 1 ? 's' : ''})`);
     } finally {
       btnPing.disabled = false;
@@ -590,8 +854,6 @@
     }
   });
 
-  // Si ya hay dispositivos, sugiere la /24 del primero (ej. 192.168.1.5
-  // -> 192.168.1.0/24); si no hay ninguno, intenta con el host actual.
   function sugerirRedDesdeIp(ip) {
     const partes = (ip || '').split('.');
     if (partes.length !== 4) return '192.168.1.0/24';
