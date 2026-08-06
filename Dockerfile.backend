@@ -38,7 +38,16 @@ RUN cargo build --release
 # ==========================================
 # ETAPA 4: Contenedor de Ejecución (Ultra ligero)
 # ==========================================
-FROM --platform=linux/amd64 debian:bookworm-slim AS runner
+# IMPORTANTE: esta imagen tiene que traer una glibc >= a la que usó la
+# imagen de compilación (arriba, "chef"/"builder"), o el binario no
+# arranca con un error tipo "GLIBC_2.XX not found". La imagen
+# lukemathwalker/cargo-chef:latest-rust-1.97-slim usa una base de Debian
+# más reciente que "bookworm", así que aquí usamos "trixie-slim" para
+# que coincidan. Si en el futuro cambian la imagen de compilación a otra
+# versión de Rust/Debian, esta línea probablemente tenga que
+# actualizarse también -- revisen el mensaje de error de glibc, siempre
+# dice exactamente qué versión falta.
+FROM --platform=linux/amd64 debian:trixie-slim AS runner
 WORKDIR /app
 
 # Librerías de runtime + curl (para el HEALTHCHECK contra /health)

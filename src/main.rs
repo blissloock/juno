@@ -1,4 +1,4 @@
-use ProyectoIntegrador::{auth, db, netflow, nmap, snmp};
+use ProyectoIntegrador::{auth, db, netflow, nmap, ping, snmp};
 
 use actix_cors::Cors;
 use actix_web::{http, middleware, web, App, HttpResponse, HttpServer, Responder};
@@ -57,23 +57,31 @@ async fn main() -> std::io::Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);
 
-    // El origen permitido para CORS sale de una variable de entorno: en
-    // desarrollo puede ser http://localhost:80, en producción el dominio
-    // real del dashboard. IMPORTANTE: nunca usar Cors::permissive() en
+    // El origen permitido para CORS sale de una variable de entorno.
+    // Acepta VARIOS orígenes separados por coma (ej.
+    // "http://localhost,http://192.168.1.50") para poder entrar tanto por
+    // localhost como por la IP de la máquina en la red local sin tener
+    // que elegir uno solo. IMPORTANTE: nunca usar Cors::permissive() en
     // producción, eso deja la API abierta a que cualquier sitio web la
     // consuma con las credenciales del usuario que la esté visitando.
-    let frontend_origin =
-        std::env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "http://localhost:80".to_string());
+    let frontend_origins: Vec<String> = std::env::var("FRONTEND_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost".to_string())
+        .split(',')
+        .map(|o| o.trim().to_string())
+        .filter(|o| !o.is_empty())
+        .collect();
 
     log::info!("Arrancando servidor web en http://0.0.0.0:{}", puerto);
-    log::info!("CORS restringido a origen: {}", frontend_origin);
+    log::info!("CORS restringido a orígenes: {:?}", frontend_origins);
 
     HttpServer::new(move || {
-        let cors = Cors::default()
-            .allowed_origin(&frontend_origin)
-            .allowed_methods(vec!["GET", "POST"])
+        let mut cors = Cors::default()
+            .allowed_methods(vec!["GET", "POST", "PUT", "DELETE"])
             .allowed_headers(vec![http::header::AUTHORIZATION, http::header::CONTENT_TYPE])
             .max_age(3600);
+        for origen in &frontend_origins {
+            cors = cors.allowed_origin(origen);
+        }
 
         App::new()
             .app_data(web::Data::new(pool.clone()))
@@ -104,6 +112,21 @@ async fn main() -> std::io::Result<()> {
             // del frontend. Protegido con JWT: escanear una IP arbitraria
             // no debe estar disponible sin autenticación.
             .route("/api/nmap/escanear", web::post().to(escanear_nmap))
+            // Descubrimiento automático: escanea un rango CIDR completo y
+            // agrega como dispositivo cualquier host nuevo que responda.
+            .route("/api/nmap/descubrir", web::post().to(descubrir_red))
+            // CRUD del catálogo de dispositivos (ver migrations/0003_*).
+            .route("/api/dispositivos", web::get().to(listar_dispositivos))
+            .route("/api/dispositivos", web::post().to(crear_dispositivo))
+            .route("/api/dispositivos/{id}", web::put().to(actualizar_dispositivo))
+            .route("/api/dispositivos/{id}", web::delete().to(eliminar_dispositivo))
+            // Ping real a un dispositivo ya registrado: actualiza su
+            // estado en la base de datos y genera una alerta automática
+            // si hubo un cambio (ej. online -> offline).
+            .route("/api/dispositivos/{id}/ping", web::post().to(ping_dispositivo))
+            // Lectura del historial de alertas (la tabla ya existía desde
+            // el inicio; lo que faltaba era exponerla vía API).
+            .route("/api/alertas", web::get().to(listar_alertas))
         // TODO(equipo): agreguen aquí el resto de rutas del dashboard.
         // Para proteger cualquiera de ellas con login, basta con agregar
         // `usuario: auth::AuthenticatedUser` como parámetro del handler,
@@ -234,6 +257,223 @@ async fn escanear_nmap(
         Err(e) => {
             log::error!("Error en escaneo Nmap contra {}: {}", datos.host, e);
             HttpResponse::InternalServerError().json(serde_json::json!({ "error": e }))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DescubrirRequest {
+    /// Rango en notación CIDR, ej. "192.168.1.0/24". Si se omite, se usa
+    /// la variable de entorno NETWORK_CIDR (si está definida).
+    red: Option<String>,
+}
+
+/// Escanea un rango de red completo y agrega automáticamente los
+/// dispositivos nuevos que respondan. Ver `nmap::descubrir_red`.
+async fn descubrir_red(
+    pool: web::Data<sqlx::PgPool>,
+    datos: web::Json<DescubrirRequest>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    let red = datos
+        .red
+        .clone()
+        .filter(|r| !r.trim().is_empty())
+        .or_else(|| std::env::var("NETWORK_CIDR").ok());
+
+    let red = match red {
+        Some(r) => r,
+        None => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Indica 'red' (ej. \"192.168.1.0/24\") o configura NETWORK_CIDR"
+            }))
+        }
+    };
+
+    match nmap::descubrir_red(&pool, &red).await {
+        Ok(resultado) => HttpResponse::Ok().json(resultado),
+        Err(e) => {
+            log::error!("Error en descubrimiento de red sobre {}: {}", red, e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": e }))
+        }
+    }
+}
+
+// =====================================================================
+// Dispositivos (catálogo)
+// =====================================================================
+
+#[derive(Deserialize)]
+struct DispositivoRequest {
+    nombre: String,
+    tipo: String,
+    ip: String,
+}
+
+async fn listar_dispositivos(
+    pool: web::Data<sqlx::PgPool>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match db::listar_dispositivos(&pool).await {
+        Ok(lista) => HttpResponse::Ok().json(lista),
+        Err(e) => {
+            log::error!("Error listando dispositivos: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
+}
+
+async fn crear_dispositivo(
+    pool: web::Data<sqlx::PgPool>,
+    datos: web::Json<DispositivoRequest>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match db::crear_dispositivo(&pool, &datos.nombre, &datos.tipo, &datos.ip).await {
+        Ok(d) => HttpResponse::Created().json(d),
+        Err(e) => {
+            // El caso más común aquí es violar UNIQUE(ip): dos
+            // dispositivos no pueden compartir la misma IP.
+            log::warn!("Error creando dispositivo: {}", e);
+            HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "No se pudo crear el dispositivo (¿la IP ya está registrada?)"
+            }))
+        }
+    }
+}
+
+async fn actualizar_dispositivo(
+    pool: web::Data<sqlx::PgPool>,
+    id: web::Path<i32>,
+    datos: web::Json<DispositivoRequest>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    let resultado =
+        db::actualizar_dispositivo(&pool, id.into_inner(), &datos.nombre, &datos.tipo, &datos.ip)
+            .await;
+
+    match resultado {
+        Ok(Some(d)) => HttpResponse::Ok().json(d),
+        Ok(None) => {
+            HttpResponse::NotFound().json(serde_json::json!({ "error": "Dispositivo no encontrado" }))
+        }
+        Err(e) => {
+            log::warn!("Error actualizando dispositivo: {}", e);
+            HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "No se pudo actualizar (¿la IP ya está registrada en otro equipo?)"
+            }))
+        }
+    }
+}
+
+async fn eliminar_dispositivo(
+    pool: web::Data<sqlx::PgPool>,
+    id: web::Path<i32>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match db::eliminar_dispositivo(&pool, id.into_inner()).await {
+        Ok(true) => HttpResponse::NoContent().finish(),
+        Ok(false) => {
+            HttpResponse::NotFound().json(serde_json::json!({ "error": "Dispositivo no encontrado" }))
+        }
+        Err(e) => {
+            log::error!("Error eliminando dispositivo: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
+}
+
+/// Ping real a un dispositivo ya registrado: prueba conectividad, guarda
+/// el nuevo estado en `dispositivos` y, si hubo un cambio de estado
+/// (ej. online -> offline), genera una alerta automáticamente. Toda esta
+/// lógica vive en el backend a propósito: el frontend nunca decide si
+/// algo es una alerta, solo la muestra.
+async fn ping_dispositivo(
+    pool: web::Data<sqlx::PgPool>,
+    id: web::Path<i32>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    let id = id.into_inner();
+
+    let dispositivo_previo = match db::obtener_dispositivo(&pool, id).await {
+        Ok(Some(d)) => d,
+        Ok(None) => {
+            return HttpResponse::NotFound()
+                .json(serde_json::json!({ "error": "Dispositivo no encontrado" }))
+        }
+        Err(e) => {
+            log::error!("Error consultando dispositivo: {}", e);
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({ "error": "Error interno" }));
+        }
+    };
+
+    let resultado = match ping::probar_conexion(&dispositivo_previo.ip).await {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("Error ejecutando ping: {}", e);
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({ "error": "Error interno ejecutando ping" }));
+        }
+    };
+
+    let nuevo_estado = if resultado.en_linea { "online" } else { "offline" };
+
+    // Alerta automática solo si hubo un cambio real de estado -- así no
+    // se llena el panel de alertas repitiendo "sigue en línea" cada vez
+    // que alguien da clic en "Probar conexión".
+    if dispositivo_previo.estado != nuevo_estado {
+        let (severidad, mensaje) = if nuevo_estado == "offline" {
+            (
+                "critica",
+                format!(
+                    "{} dejó de responder ({})",
+                    dispositivo_previo.nombre, dispositivo_previo.ip
+                ),
+            )
+        } else {
+            (
+                "info",
+                format!(
+                    "{} volvió a responder ({})",
+                    dispositivo_previo.nombre, dispositivo_previo.ip
+                ),
+            )
+        };
+        if let Err(e) =
+            db::crear_alerta(&pool, "ping", severidad, &mensaje, Some(&dispositivo_previo.ip)).await
+        {
+            log::error!("Error guardando alerta automática: {}", e);
+        }
+    }
+
+    match db::actualizar_estado_dispositivo(&pool, id, nuevo_estado).await {
+        Ok(Some(d)) => HttpResponse::Ok().json(serde_json::json!({
+            "dispositivo": d,
+            "latencia_ms": resultado.latencia_ms,
+        })),
+        Ok(None) => {
+            HttpResponse::NotFound().json(serde_json::json!({ "error": "Dispositivo no encontrado" }))
+        }
+        Err(e) => {
+            log::error!("Error actualizando estado del dispositivo: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
+        }
+    }
+}
+
+// =====================================================================
+// Alertas
+// =====================================================================
+
+async fn listar_alertas(
+    pool: web::Data<sqlx::PgPool>,
+    _usuario: auth::AuthenticatedUser,
+) -> impl Responder {
+    match db::listar_alertas(&pool, 100).await {
+        Ok(lista) => HttpResponse::Ok().json(lista),
+        Err(e) => {
+            log::error!("Error listando alertas: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
         }
     }
 }

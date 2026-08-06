@@ -16,7 +16,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::Row;
 use std::env;
 use std::time::Duration;
@@ -272,4 +272,171 @@ pub async fn crear_alerta(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Últimas N alertas, más recientes primero. Para el panel de alertas
+/// del dashboard.
+pub async fn listar_alertas(pool: &PgPool, limite: i64) -> Result<Vec<Alerta>, sqlx::Error> {
+    let filas = sqlx::query(
+        "SELECT id, tipo, severidad, mensaje, origen, resuelta, creada_en
+         FROM alertas
+         ORDER BY creada_en DESC
+         LIMIT $1",
+    )
+    .bind(limite.clamp(1, 500))
+    .fetch_all(pool)
+    .await?;
+
+    Ok(filas
+        .into_iter()
+        .map(|f| Alerta {
+            id: f.get("id"),
+            tipo: f.get("tipo"),
+            severidad: f.get("severidad"),
+            mensaje: f.get("mensaje"),
+            origen: f.get("origen"),
+            resuelta: f.get("resuelta"),
+            creada_en: f.get("creada_en"),
+        })
+        .collect())
+}
+
+#[derive(Debug, Serialize)]
+pub struct Alerta {
+    pub id: i32,
+    pub tipo: String,
+    pub severidad: String,
+    pub mensaje: String,
+    pub origen: Option<String>,
+    pub resuelta: bool,
+    pub creada_en: DateTime<Utc>,
+}
+
+// =====================================================================
+// Dispositivos (catálogo de equipos monitoreados, ver migrations/0003_*)
+// =====================================================================
+// Se queda relacional a propósito -- ver el comentario en la migración.
+// A diferencia de `eventos` (historial), aquí sí necesitamos UNIQUE(ip) e
+// integridad al hacer UPDATE/DELETE por id.
+
+#[derive(Debug, Serialize)]
+pub struct Dispositivo {
+    pub id: i32,
+    pub nombre: String,
+    pub tipo: String,
+    pub ip: String,
+    pub estado: String,
+    pub cpu_pct: Option<f32>,
+    pub ram_pct: Option<f32>,
+    pub temp_c: Option<f32>,
+    pub actualizado_en: DateTime<Utc>,
+}
+
+fn fila_a_dispositivo(f: PgRow) -> Dispositivo {
+    Dispositivo {
+        id: f.get("id"),
+        nombre: f.get("nombre"),
+        tipo: f.get("tipo"),
+        ip: f.get("ip"),
+        estado: f.get("estado"),
+        cpu_pct: f.get("cpu_pct"),
+        ram_pct: f.get("ram_pct"),
+        temp_c: f.get("temp_c"),
+        actualizado_en: f.get("actualizado_en"),
+    }
+}
+
+pub async fn listar_dispositivos(pool: &PgPool) -> Result<Vec<Dispositivo>, sqlx::Error> {
+    let filas = sqlx::query(
+        "SELECT id, nombre, tipo, ip, estado, cpu_pct, ram_pct, temp_c, actualizado_en
+         FROM dispositivos
+         ORDER BY nombre ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(filas.into_iter().map(fila_a_dispositivo).collect())
+}
+
+pub async fn obtener_dispositivo(pool: &PgPool, id: i32) -> Result<Option<Dispositivo>, sqlx::Error> {
+    let fila = sqlx::query(
+        "SELECT id, nombre, tipo, ip, estado, cpu_pct, ram_pct, temp_c, actualizado_en
+         FROM dispositivos WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(fila.map(fila_a_dispositivo))
+}
+
+pub async fn crear_dispositivo(
+    pool: &PgPool,
+    nombre: &str,
+    tipo: &str,
+    ip: &str,
+) -> Result<Dispositivo, sqlx::Error> {
+    let fila = sqlx::query(
+        "INSERT INTO dispositivos (nombre, tipo, ip)
+         VALUES ($1, $2, $3)
+         RETURNING id, nombre, tipo, ip, estado, cpu_pct, ram_pct, temp_c, actualizado_en",
+    )
+    .bind(nombre)
+    .bind(tipo)
+    .bind(ip)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(fila_a_dispositivo(fila))
+}
+
+pub async fn actualizar_dispositivo(
+    pool: &PgPool,
+    id: i32,
+    nombre: &str,
+    tipo: &str,
+    ip: &str,
+) -> Result<Option<Dispositivo>, sqlx::Error> {
+    let fila = sqlx::query(
+        "UPDATE dispositivos SET nombre = $1, tipo = $2, ip = $3, actualizado_en = NOW()
+         WHERE id = $4
+         RETURNING id, nombre, tipo, ip, estado, cpu_pct, ram_pct, temp_c, actualizado_en",
+    )
+    .bind(nombre)
+    .bind(tipo)
+    .bind(ip)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(fila.map(fila_a_dispositivo))
+}
+
+pub async fn eliminar_dispositivo(pool: &PgPool, id: i32) -> Result<bool, sqlx::Error> {
+    let resultado = sqlx::query("DELETE FROM dispositivos WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(resultado.rows_affected() > 0)
+}
+
+/// Actualiza solo el estado de un dispositivo (usado tras un ping).
+/// `cpu_pct`/`ram_pct`/`temp_c` no se tocan aquí porque ese dato viene de
+/// SNMP, no de un ping -- ver snmp.rs para esa parte.
+pub async fn actualizar_estado_dispositivo(
+    pool: &PgPool,
+    id: i32,
+    estado: &str,
+) -> Result<Option<Dispositivo>, sqlx::Error> {
+    let fila = sqlx::query(
+        "UPDATE dispositivos SET estado = $1, actualizado_en = NOW()
+         WHERE id = $2
+         RETURNING id, nombre, tipo, ip, estado, cpu_pct, ram_pct, temp_c, actualizado_en",
+    )
+    .bind(estado)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(fila.map(fila_a_dispositivo))
 }

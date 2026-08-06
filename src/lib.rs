@@ -9,4 +9,5 @@ pub mod auth;
 pub mod db;
 pub mod netflow;
 pub mod nmap;
+pub mod ping;
 pub mod snmp;
