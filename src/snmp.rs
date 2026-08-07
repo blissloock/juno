@@ -3,7 +3,11 @@
 //! Hace polling periódico contra los hosts definidos en la variable de
 //! entorno `SNMP_HOSTS` (formato "host:community,host2:community2") y
 //! guarda cada lectura como un documento en la colección `eventos`
-//! (tipo = "snmp"), igual que hace `netflow.rs`.
+//! (tipo = "snmp"), igual que hace `netflow.rs`. Además, si logra parsear
+//! valores numéricos útiles (carga de CPU, memoria), actualiza
+//! `dispositivos.cpu_pct`/`ram_pct` -- eso es lo que el dashboard lee
+//! para pintar los gauges, así que sin este paso el frontend siempre
+//! mostraría "N/D" aunque el polling SNMP estuviera funcionando bien.
 //!
 //! Nota técnica importante: el crate `snmp` es SÍNCRONO (usa
 //! `std::net::UdpSocket` con timeout por debajo, no tokio). Si lo
@@ -11,14 +15,17 @@
 //! runtime de tokio mientras espera la respuesta del dispositivo. Por eso
 //! la consulta real corre dentro de `tokio::task::spawn_blocking`.
 //!
-//! Nota sobre el formato guardado: al igual que con NetFlow, el PDU que
-//! regresa el crate `snmp` no implementa `serde::Serialize` (solo
-//! `Debug`), así que guardamos su representación `Debug` completa dentro
-//! del documento JSON en vez de intentar reconstruirlo campo por campo.
-//! Es información completa y consultable igual, solo que como texto.
+//! Nota sobre el formato guardado en `eventos`: al igual que con NetFlow,
+//! el PDU que regresa el crate `snmp` no implementa `serde::Serialize`
+//! (solo `Debug`), así que guardamos su representación `Debug` completa
+//! dentro del documento JSON en vez de intentar reconstruirlo campo por
+//! campo. Es información completa y consultable igual, solo que como
+//! texto. Para las métricas que sí necesitamos como número (CPU/RAM),
+//! extraemos el valor tipado del varbind por separado (ver
+//! `valor_a_f64`), sin depender de parsear ese texto de Debug.
 
 use crate::db;
-use snmp::SyncSession;
+use snmp::{SyncSession, Value};
 use sqlx::PgPool;
 use std::env;
 use std::net::ToSocketAddrs;
@@ -46,6 +53,29 @@ const OIDS_A_CONSULTAR: &[(&str, &[u32])] = &[
 struct HostSnmp {
     host: String,
     community: String,
+}
+
+/// Resultado de convertir los varbinds crudos a algo que sí podemos
+/// guardar como columna numérica en `dispositivos`.
+#[derive(Debug, Default)]
+struct MetricasParsed {
+    cpu_pct: Option<f32>,
+    ram_pct: Option<f32>,
+}
+
+/// Convierte un `Value` de SNMP a `f64` sin importar el tipo ASN.1 exacto
+/// con el que haya respondido el agente (distintos agentes devuelven
+/// enteros como Integer, Counter32, Unsigned32 o incluso como texto).
+fn valor_a_f64(valor: &Value) -> Option<f64> {
+    match valor {
+        Value::Integer(i) => Some(*i as f64),
+        Value::Counter32(u) => Some(*u as f64),
+        Value::Unsigned32(u) => Some(*u as f64),
+        Value::Timeticks(u) => Some(*u as f64),
+        Value::Counter64(u) => Some(*u as f64),
+        Value::OctetString(bytes) => std::str::from_utf8(bytes).ok()?.trim().parse::<f64>().ok(),
+        _ => None,
+    }
 }
 
 /// Lee `SNMP_HOSTS` del entorno. Formato: "192.168.1.1:public,10.0.0.1:public".
@@ -113,18 +143,42 @@ async fn consultar_host(pool: &PgPool, cfg: &HostSnmp) -> Result<(), String> {
     let host = cfg.host.clone();
     let community = cfg.community.clone();
 
-    let datos = tokio::task::spawn_blocking(move || consultar_snmp_bloqueante(&host, &community))
-        .await
-        .map_err(|e| format!("la tarea SNMP se canceló: {}", e))??;
+    let (datos, metricas) =
+        tokio::task::spawn_blocking(move || consultar_snmp_bloqueante(&host, &community))
+            .await
+            .map_err(|e| format!("la tarea SNMP se canceló: {}", e))??;
 
     db::insertar_evento(pool, "snmp", Some(&cfg.host), &datos)
         .await
-        .map_err(|e| format!("error guardando en base de datos: {}", e))
+        .map_err(|e| format!("error guardando en base de datos: {}", e))?;
+
+    // Solo intentamos actualizar el catálogo si logramos parsear algo
+    // numérico. Si el dispositivo todavía no está registrado en
+    // `dispositivos` (UPDATE sin filas afectadas), no es un error --
+    // simplemente no hay nada que actualizar todavía.
+    if metricas.cpu_pct.is_some() || metricas.ram_pct.is_some() {
+        if let Err(e) =
+            db::actualizar_metricas_dispositivo(pool, &cfg.host, metricas.cpu_pct, metricas.ram_pct)
+                .await
+        {
+            log::warn!(
+                "SNMP respondió en {} pero no se pudo guardar la métrica en 'dispositivos': {}",
+                cfg.host, e
+            );
+        }
+    }
+
+    Ok(())
 }
 
 /// Consulta síncrona real vía SNMP GET. Se ejecuta dentro de
-/// `spawn_blocking` (ver `consultar_host`).
-fn consultar_snmp_bloqueante(host: &str, community: &str) -> Result<serde_json::Value, String> {
+/// `spawn_blocking` (ver `consultar_host`). Regresa tanto el documento
+/// JSON crudo (para `eventos`) como las métricas ya parseadas a número
+/// (para `dispositivos`).
+fn consultar_snmp_bloqueante(
+    host: &str,
+    community: &str,
+) -> Result<(serde_json::Value, MetricasParsed), String> {
     let direccion = format!("{}:161", host)
         .to_socket_addrs()
         .map_err(|e| format!("dirección inválida '{}': {}", host, e))?
@@ -140,16 +194,24 @@ fn consultar_snmp_bloqueante(host: &str, community: &str) -> Result<serde_json::
     .map_err(|e| format!("no se pudo abrir sesión SNMP: {:?}", e))?;
 
     let mut valores = serde_json::Map::new();
+    let mut numericos: std::collections::HashMap<&str, f64> = std::collections::HashMap::new();
     let mut algun_exito = false;
 
     for (nombre, oid) in OIDS_A_CONSULTAR {
         match sesion.get(oid) {
-            Ok(pdu) => {
+            Ok(mut pdu) => {
                 algun_exito = true;
-                // Ver nota técnica al inicio del archivo sobre por qué
-                // esto va como texto (Debug) y no como objeto JSON
-                // estructurado: el PDU no implementa Serialize.
+                // Guardamos el Debug completo del PDU, igual que antes
+                // (ver nota técnica al inicio del archivo).
                 valores.insert((*nombre).to_string(), serde_json::json!(format!("{:?}", pdu)));
+
+                // Además, intentamos extraer el valor tipado del primer
+                // varbind de la respuesta para poder convertirlo a número.
+                if let Some((_oid_resp, valor)) = pdu.varbinds.next() {
+                    if let Some(num) = valor_a_f64(&valor) {
+                        numericos.insert(*nombre, num);
+                    }
+                }
             }
             Err(e) => {
                 log::debug!("OID '{}' no respondió en {}: {:?}", nombre, host, e);
@@ -168,9 +230,32 @@ fn consultar_snmp_bloqueante(host: &str, community: &str) -> Result<serde_json::
         ));
     }
 
-    Ok(serde_json::json!({
-        "host": host,
-        "community_usada": community,
-        "valores": valores,
-    }))
+    // laLoad_1min (UCD-SNMP-MIB) es un promedio de carga ("load average"),
+    // NO un porcentaje de uso de CPU real -- un valor de 1.0 en un equipo
+    // de 1 núcleo significa "100% ocupado", pero en un equipo de 4
+    // núcleos significa "25% ocupado en promedio". Como no consultamos
+    // el número de núcleos (no hay un OID estándar simple y universal
+    // para eso), lo normalizamos multiplicándolo por 100 y recortándolo a
+    // [0,100] como una aproximación visual para el gauge del frontend.
+    // Queda documentado aquí para que en la defensa puedan explicar la
+    // limitación en vez de presentarlo como un %CPU exacto.
+    let cpu_pct = numericos
+        .get("laLoad_1min")
+        .map(|carga| (carga * 100.0).clamp(0.0, 100.0) as f32);
+
+    let ram_pct = match (numericos.get("memTotalReal"), numericos.get("memAvailReal")) {
+        (Some(total), Some(disponible)) if *total > 0.0 => {
+            Some((((total - disponible) / total) * 100.0).clamp(0.0, 100.0) as f32)
+        }
+        _ => None,
+    };
+
+    Ok((
+        serde_json::json!({
+            "host": host,
+            "community_usada": community,
+            "valores": valores,
+        }),
+        MetricasParsed { cpu_pct, ram_pct },
+    ))
 }

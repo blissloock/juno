@@ -160,13 +160,27 @@
     if (e.key === 'Enter') iniciarSesion();
   });
 
-  function entrarAlPanel() {
-    pantallaBienvenida.classList.add('hidden');
-    panelPrincipal.classList.remove('hidden');
-    cargarTodo();
-    if (intervaloActualizacion) clearInterval(intervaloActualizacion);
-    intervaloActualizacion = setInterval(cargarTodo, 20000);
+  async function aplicarVisibilidadPorRol() {
+  try {
+    const respuesta = await apiFetch('/api/perfil');
+    if (!respuesta.ok) return;
+    const datos = await respuesta.json();
+    const esAdmin = datos.rol === 'admin';
+    document.querySelectorAll('#btn-nuevo, #btn-nuevo-empty, #btn-descubrir, #btn-reemplazar, #btn-eliminar, #btn-eliminar-masivo, #btn-limpiar-inactivos, #btn-escanear')
+      .forEach(el => { if (el) el.classList.toggle('hidden', !esAdmin); });
+  } catch (e) {
+    // Si el token expiró, apiFetch ya llama a cerrarSesion() por su cuenta.
   }
+}
+
+function entrarAlPanel() {
+  pantallaBienvenida.classList.add('hidden');
+  panelPrincipal.classList.remove('hidden');
+  aplicarVisibilidadPorRol();
+  cargarTodo();
+  if (intervaloActualizacion) clearInterval(intervaloActualizacion);
+  intervaloActualizacion = setInterval(cargarTodo, 20000);
+}
 
   function cerrarSesion(mensaje) {
     localStorage.removeItem(TOKEN_KEY);

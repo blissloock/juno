@@ -545,3 +545,33 @@ pub async fn actualizar_estado_dispositivo(
     Ok(fila.map(fila_a_dispositivo))
 }
 
+/// Actualiza cpu_pct/ram_pct de un dispositivo ya registrado, identificado
+/// por su IP (así es como lo referencian tanto SNMP_HOSTS como el catálogo
+/// `dispositivos`). Usa COALESCE para no pisar con NULL un valor que ya
+/// teníamos si esta lectura en particular no trajo ese dato. No falla si
+/// la IP no está en el catálogo todavía (SNMP puede estar corriendo
+/// contra un host que aún no se agregó manualmente ni se descubrió con
+/// Nmap) -- en ese caso simplemente no hay fila que actualizar.
+pub async fn actualizar_metricas_dispositivo(
+    pool: &PgPool,
+    ip: &str,
+    cpu_pct: Option<f32>,
+    ram_pct: Option<f32>,
+) -> Result<Option<Dispositivo>, sqlx::Error> {
+    let fila = sqlx::query(
+        "UPDATE dispositivos
+         SET cpu_pct = COALESCE($1, cpu_pct),
+             ram_pct = COALESCE($2, ram_pct),
+             actualizado_en = NOW()
+         WHERE ip = $3
+         RETURNING id, nombre, tipo, ip, estado, cpu_pct, ram_pct, temp_c, actualizado_en",
+    )
+    .bind(cpu_pct)
+    .bind(ram_pct)
+    .bind(ip)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(fila.map(fila_a_dispositivo))
+}
+

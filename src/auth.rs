@@ -17,6 +17,7 @@ use futures_util::future::{ready, Ready};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::env;
+use actix_web::HttpResponse;
 
 const EXP_HORAS: i64 = 8;
 
@@ -114,5 +115,27 @@ impl FromRequest for AuthenticatedUser {
             });
 
         ready(resultado)
+    }
+}
+
+impl AuthenticatedUser {
+    /// Devuelve `Err` con una respuesta 403 lista para regresar si el
+    /// usuario autenticado no tiene rol "admin". Los handlers que
+    /// modifican el catálogo de dispositivos o disparan escaneos deben
+    /// llamar esto como primera línea del cuerpo de la función.
+    ///
+    /// Nota de diseño: la verificación de rol vive aquí, no en el
+    /// extractor `FromRequest`, porque algunos endpoints (listar,
+    /// ping) SÍ deben quedar disponibles para 'lector' -- si
+    /// exigiéramos "admin" desde el extractor, ningún 'lector' podría
+    /// ni siquiera ver el dashboard.
+    pub fn exigir_admin(&self) -> Result<(), HttpResponse> {
+        if self.rol == "admin" {
+            Ok(())
+        } else {
+            Err(HttpResponse::Forbidden().json(serde_json::json!({
+                "error": "Esta acción requiere rol de administrador"
+            })))
+        }
     }
 }

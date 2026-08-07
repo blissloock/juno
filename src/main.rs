@@ -1,4 +1,4 @@
-use juno::{auth, db, netflow, nmap, ping, snmp};
+use juno::{alerts, auth, db, ids, netflow, nmap, ping, snmp};
 
 use actix_cors::Cors;
 use actix_web::{http, middleware, web, App, HttpResponse, HttpServer, Responder};
@@ -56,6 +56,14 @@ async fn main() -> std::io::Result<()> {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);
+
+    // 6. Monitor de anomalías de red (entropía NetFlow) en segundo plano.
+    let pool_ids = pool.clone();
+    tokio::spawn(async move {
+    if let Err(e) = ids::iniciar_monitor_entropia(pool_ids).await {
+        log::error!("Error crítico en el monitor de entropía NetFlow: {}", e);
+    }
+        });
 
     // El origen permitido para CORS sale de una variable de entorno.
     // Acepta VARIOS orígenes separados por coma (ej.
@@ -181,8 +189,8 @@ async fn login(pool: web::Data<sqlx::PgPool>, datos: web::Json<LoginRequest>) ->
 
     let _ = db::actualizar_ultimo_login(&pool, usuario.id).await;
 
-    match auth::generar_token(usuario.id, &usuario.rol) {
-        Ok(token) => HttpResponse::Ok().json(serde_json::json!({ "token": token })),
+   match auth::generar_token(usuario.id, &usuario.rol) {
+    Ok(token) => HttpResponse::Ok().json(serde_json::json!({ "token": token, "rol": usuario.rol })),
         Err(e) => {
             log::error!("Error generando token: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({ "error": "Error interno" }))
@@ -249,8 +257,11 @@ struct EscanearRequest {
 async fn escanear_nmap(
     pool: web::Data<sqlx::PgPool>,
     datos: web::Json<EscanearRequest>,
-    _usuario: auth::AuthenticatedUser,
+    usuario: auth::AuthenticatedUser,
 ) -> impl Responder {
+    if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+    }
     match nmap::escanear_host(&pool, &datos.host).await {
         Ok(resultado) => HttpResponse::Ok().json(resultado),
         Err(e) => {
@@ -272,8 +283,11 @@ struct DescubrirRequest {
 async fn descubrir_red(
     pool: web::Data<sqlx::PgPool>,
     datos: web::Json<DescubrirRequest>,
-    _usuario: auth::AuthenticatedUser,
+    usuario: auth::AuthenticatedUser,
 ) -> impl Responder {
+    if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+    }
     let red = datos
         .red
         .clone()
@@ -325,8 +339,11 @@ async fn listar_dispositivos(
 async fn crear_dispositivo(
     pool: web::Data<sqlx::PgPool>,
     datos: web::Json<DispositivoRequest>,
-    _usuario: auth::AuthenticatedUser,
+    usuario: auth::AuthenticatedUser,
 ) -> impl Responder {
+    if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+}
     match db::crear_dispositivo(&pool, &datos.nombre, &datos.tipo, &datos.ip).await {
         Ok(d) => HttpResponse::Created().json(d),
         Err(e) => {
@@ -344,8 +361,13 @@ async fn actualizar_dispositivo(
     pool: web::Data<sqlx::PgPool>,
     id: web::Path<i32>,
     datos: web::Json<DispositivoRequest>,
-    _usuario: auth::AuthenticatedUser,
+    usuario: auth::AuthenticatedUser,
 ) -> impl Responder {
+    if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+    }if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+    }
     let resultado =
         db::actualizar_dispositivo(&pool, id.into_inner(), &datos.nombre, &datos.tipo, &datos.ip)
             .await;
@@ -367,8 +389,11 @@ async fn actualizar_dispositivo(
 async fn eliminar_dispositivo(
     pool: web::Data<sqlx::PgPool>,
     id: web::Path<i32>,
-    _usuario: auth::AuthenticatedUser,
+    usuario: auth::AuthenticatedUser,
 ) -> impl Responder {
+    if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+    }
     match db::eliminar_dispositivo(&pool, id.into_inner()).await {
         Ok(true) => HttpResponse::NoContent().finish(),
         Ok(false) => {
@@ -438,11 +463,7 @@ async fn ping_dispositivo(
                 ),
             )
         };
-        if let Err(e) =
-            db::crear_alerta(&pool, "ping", severidad, &mensaje, Some(&dispositivo_previo.ip)).await
-        {
-            log::error!("Error guardando alerta automática: {}", e);
-        }
+        alerts::registrar_alerta(&pool, "ping", severidad, &mensaje, Some(&dispositivo_previo.ip)).await;
     }
 
     match db::actualizar_estado_dispositivo(&pool, id, nuevo_estado).await {
@@ -485,8 +506,11 @@ struct EliminarMasivoRequest {
 async fn eliminar_dispositivos_masivo(
     pool: web::Data<sqlx::PgPool>,
     datos: web::Json<EliminarMasivoRequest>,
-    _usuario: auth::AuthenticatedUser,
+    usuario: auth::AuthenticatedUser,
 ) -> impl Responder {
+    if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+    }
     match db::eliminar_dispositivos_masivo(&pool, &datos.ids).await {
         Ok(eliminados) => HttpResponse::Ok().json(serde_json::json!({
             "mensaje": format!("Se eliminaron {} dispositivos correctamente", eliminados),
@@ -501,8 +525,11 @@ async fn eliminar_dispositivos_masivo(
 
 async fn limpiar_dispositivos_inactivos(
     pool: web::Data<sqlx::PgPool>,
-    _usuario: auth::AuthenticatedUser,
+    usuario: auth::AuthenticatedUser,
 ) -> impl Responder {
+    if let Err(resp) = usuario.exigir_admin() {
+    return resp;
+    }
     match db::eliminar_dispositivos_offline(&pool).await {
         Ok(eliminados) => HttpResponse::Ok().json(serde_json::json!({
             "mensaje": format!("Se eliminaron {} dispositivos inactivos/offline", eliminados),
@@ -527,4 +554,3 @@ async fn grafica_netflow(
         }
     }
 }
-

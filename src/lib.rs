@@ -7,6 +7,7 @@
 pub mod alerts;
 pub mod auth;
 pub mod db;
+pub mod ids;
 pub mod netflow;
 pub mod nmap;
 pub mod ping;
