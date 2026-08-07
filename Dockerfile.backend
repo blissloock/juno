@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install -y \
 # todo el proceso como root.
 RUN useradd --create-home --shell /usr/sbin/nologin appuser
 
-COPY --from=builder /app/target/release/ProyectoIntegrador ./backend_bin
+COPY --from=builder /app/target/release/juno ./backend_bin
 COPY --from=builder /app/target/release/crear_admin ./crear_admin
 RUN chown appuser:appuser ./backend_bin ./crear_admin
 

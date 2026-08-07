@@ -3,30 +3,6 @@
 version = 4
 
 [[package]]
-name = "ProyectoIntegrador"
-version = "0.1.0"
-dependencies = [
- "actix-cors",
- "actix-web",
- "argon2",
- "chrono",
- "env_logger",
- "futures-util",
- "jsonwebtoken",
- "lettre",
- "log",
- "netflow_parser",
- "quick-xml",
- "russh",
- "russh-keys",
- "serde",
- "serde_json",
- "snmp",
- "sqlx",
- "tokio",
-]
-
-[[package]]
 name = "actix-codec"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1631,6 +1607,30 @@ dependencies = [
  "serde",
  "serde_json",
  "simple_asn1",
+]
+
+[[package]]
+name = "juno"
+version = "0.1.0"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "argon2",
+ "chrono",
+ "env_logger",
+ "futures-util",
+ "jsonwebtoken",
+ "lettre",
+ "log",
+ "netflow_parser",
+ "quick-xml",
+ "russh",
+ "russh-keys",
+ "serde",
+ "serde_json",
+ "snmp",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

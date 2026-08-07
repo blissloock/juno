@@ -1,5 +1,5 @@
 /* ============================================================
-   NetPulse — lógica del panel de monitoreo y análisis de red
+   Juno — lógica del panel de monitoreo y análisis de red
    Conectado al backend real (Rust/Actix) vía fetch().
    ============================================================ */
 
@@ -7,7 +7,7 @@
   'use strict';
 
   const API_BASE = window.API_BASE || `http://${window.location.hostname}:8080`;
-  const TOKEN_KEY = 'netpulse_token';
+  const TOKEN_KEY = 'juno_token';
 
   // ---------- Estado de la aplicación ----------
   let dispositivos = [];
@@ -301,6 +301,31 @@
     });
   }
 
+  function badgeTipoDispositivo(tipo) {
+    const t = (tipo || '').toLowerCase();
+    let icono = '💻';
+    let clase = 'type-pc';
+
+    if (t.includes('router') || t.includes('gateway')) {
+      icono = '🌐';
+      clase = 'type-router';
+    } else if (t.includes('switch')) {
+      icono = '🔌';
+      clase = 'type-switch';
+    } else if (t.includes('servidor') || t.includes('server')) {
+      icono = '🖥️';
+      clase = 'type-servidor';
+    } else if (t.includes('impresora') || t.includes('printer')) {
+      icono = '🖨️';
+      clase = 'type-impresora';
+    } else if (t.includes('cámara') || t.includes('camara') || t.includes('camera')) {
+      icono = '📹';
+      clase = 'type-camara';
+    }
+
+    return `<span class="type-badge ${clase}">${icono} ${escapeHtml(tipo)}</span>`;
+  }
+
   function renderTabla() {
     tablaBody.innerHTML = '';
     const filtrados = obtenerDispositivosFiltrados();
@@ -321,8 +346,8 @@
         <td class="col-select" style="text-align:center;">
           <input type="checkbox" class="chk-row" data-id="${d.id}" ${estaSeleccionado ? 'checked' : ''}>
         </td>
-        <td>${escapeHtml(d.nombre)}</td>
-        <td>${escapeHtml(d.tipo)}</td>
+        <td><strong>${escapeHtml(d.nombre)}</strong></td>
+        <td>${badgeTipoDispositivo(d.tipo)}</td>
         <td class="ip-cell">${escapeHtml(d.ip)}</td>
         <td>
           <span class="status-pill ${claseEstado(d.estado)}">
@@ -656,6 +681,12 @@
     form.reset();
     txtCpu.value = ''; txtRam.value = ''; txtTemp.value = ''; txtUptime.value = ''; txtEstado.value = '';
 
+    const boxResult = document.getElementById('box-scan-result');
+    if (boxResult) {
+      boxResult.innerHTML = '';
+      boxResult.classList.add('hidden');
+    }
+
     if (dispositivo) {
       modalTitulo.textContent = 'Editar dispositivo';
       dispIndex.value = dispositivo.id;
@@ -723,7 +754,7 @@
 
     btnEscanear.disabled = true;
     const textoOriginal = btnEscanear.innerHTML;
-    btnEscanear.textContent = 'Escaneando...';
+    btnEscanear.textContent = 'Escaneando con Nmap...';
 
     try {
       const respuesta = await apiFetch('/api/nmap/escanear', {
@@ -740,11 +771,42 @@
       txtTemp.value = 'N/D (requiere SNMP)';
       txtUptime.value = new Date().toLocaleTimeString('es-MX');
 
+      // Asignar tipo inferido automáticamente al campo Tipo del formulario
+      if (datos.tipo_inferido) {
+        txtTipo.value = datos.tipo_inferido;
+      }
+
+      // Mostrar resumen visual del escaneo Nmap en la caja del modal
+      const boxResult = document.getElementById('box-scan-result');
+      if (boxResult) {
+        const puertos = datos.puertos_abiertos || [];
+        const macStr = datos.mac ? ` (MAC: ${escapeHtml(datos.mac)})` : '';
+        const vendorStr = datos.vendor ? escapeHtml(datos.vendor) : 'Desconocido';
+        const soStr = datos.so_detectado ? escapeHtml(datos.so_detectado) : 'No detectado';
+
+        let puertosHtml = puertos.length > 0
+          ? puertos.map(p => `<span class="port-chip">${p.puerto}/${p.protocolo} (${escapeHtml(p.servicio)})</span>`).join(' ')
+          : '<span class="empty-ports">Sin puertos abiertos detectados</span>';
+
+        boxResult.innerHTML = `
+          <div class="scan-header">
+            <span class="scan-title">🔍 Clasificación Automática Nmap:</span>
+            ${badgeTipoDispositivo(datos.tipo_inferido || 'Desconocido')}
+          </div>
+          <div class="scan-details">
+            <div><strong>Fabricante:</strong> ${vendorStr}${macStr}</div>
+            <div><strong>SO Detectado:</strong> ${soStr}</div>
+            <div class="scan-ports"><strong>Puertos Abiertos (${puertos.length}):</strong> <div class="ports-list">${puertosHtml}</div></div>
+          </div>
+        `;
+        boxResult.classList.remove('hidden');
+      }
+
       const puertos = datos.puertos_abiertos || [];
       mostrarToast(
         enLinea
-          ? `Dispositivo en línea · ${puertos.length} puerto(s) abierto(s)`
-          : 'El dispositivo no respondió'
+          ? `Identificado como ${datos.tipo_inferido || 'Dispositivo'} (${puertos.length} puerto(s))`
+          : 'El dispositivo no respondió al ping'
       );
     } catch (e) {
       mostrarToast(e.message);

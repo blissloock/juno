@@ -18,7 +18,7 @@
 //! binario `crear_admin` junto a `backend_bin`):
 //!   docker compose exec backend ./crear_admin admin "MiPasswordSegura123!" admin
 
-use ProyectoIntegrador::{auth, db};
+use juno::{auth, db};
 
 #[tokio::main]
 async fn main() {

@@ -1,4 +1,4 @@
-//! Librería del Proyecto Integrador.
+//! Librería de Juno.
 //!
 //! Se expone como lib (además del binario en `main.rs`) para que
 //! utilidades de línea de comandos como `src/bin/crear_admin.rs` puedan

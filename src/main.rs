@@ -1,4 +1,4 @@
-use ProyectoIntegrador::{auth, db, netflow, nmap, ping, snmp};
+use juno::{auth, db, netflow, nmap, ping, snmp};
 
 use actix_cors::Cors;
 use actix_web::{http, middleware, web, App, HttpResponse, HttpServer, Responder};
@@ -11,7 +11,7 @@ async fn main() -> std::io::Result<()> {
     }
     env_logger::init();
 
-    log::info!("Iniciando Backend del Proyecto Integrador...");
+    log::info!("Iniciando Backend de Juno...");
 
     // 1. Conexión a la base de datos.
     let pool = db::crear_pool()

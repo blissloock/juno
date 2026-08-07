@@ -2,7 +2,7 @@ services:
   # 1. Base de datos de series temporales (TimescaleDB)
   db:
     image: timescale/timescaledb:latest-pg16
-    container_name: integrador_db
+    container_name: juno_db
     restart: always
     env_file:
       - .env
@@ -10,17 +10,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    # SEGURIDAD: ya NO se publica el puerto 5432 al host/exterior.
-    # El backend le habla a "db:5432" dentro de la red interna de Docker
-    # (red_monitoreo); nadie fuera del docker-compose necesita tocar la
-    # base de datos directamente. Si en algún momento necesitas conectarte
-    # con un cliente SQL desde tu máquina para depurar, usa:
-    #   docker compose exec db psql -U $POSTGRES_USER -d $POSTGRES_DB
-    # en vez de exponer el puerto al mundo.
     volumes:
       - db_data:/var/lib/postgresql/data
     networks:
-      - red_monitoreo
+      - juno_network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -32,7 +25,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: integrador_backend
+    container_name: juno_backend
     restart: always
     platform: linux/amd64
     ports:
@@ -48,32 +41,27 @@ services:
       - GMAIL_PASS=${GMAIL_PASS}
       - JWT_SECRET=${JWT_SECRET}
       - FRONTEND_ORIGIN=${FRONTEND_ORIGIN}
-    # Descomentar cuando nmap.rs haga escaneos que requieran sockets raw
-    # (por ejemplo -sS o detección de SO con -O):
-    # cap_add:
-    #   - NET_RAW
-    #   - NET_ADMIN
     depends_on:
       db:
         condition: service_healthy
     networks:
-      - red_monitoreo
+      - juno_network
 
   # 3. Servidor Web Ligero para el Frontend de tu Equipo (Nginx)
   frontend:
     image: nginx:alpine
-    container_name: integrador_frontend
+    container_name: juno_frontend
     restart: always
     ports:
       - "80:80"
     volumes:
       - ./frontend:/usr/share/nginx/html
     networks:
-      - red_monitoreo
+      - juno_network
 
 volumes:
   db_data:
 
 networks:
-  red_monitoreo:
+  juno_network:
     driver: bridge

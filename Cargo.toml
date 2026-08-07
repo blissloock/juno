@@ -1,5 +1,5 @@
 [package]
-name = "ProyectoIntegrador"
+name = "juno"
 version = "0.1.0"
 edition = "2021" # Cambiado a 2021 para máxima compatibilidad con crates de red
 

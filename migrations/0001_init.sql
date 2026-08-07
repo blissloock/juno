@@ -1,4 +1,4 @@
--- Esquema inicial del Proyecto Integrador.
+-- Esquema inicial de Juno.
 -- Se ejecuta automáticamente al arrancar el backend (ver db::ejecutar_migraciones).
 
 CREATE EXTENSION IF NOT EXISTS timescaledb;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NetPulse · Monitoreo de Redes</title>
+<title>Juno · Monitoreo de Redes</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -34,7 +34,7 @@
   </svg>
 
   <div class="welcome-card">
-    <span class="eyebrow">NetPulse · Centro de Operaciones</span>
+    <span class="eyebrow">Juno · Centro de Operaciones</span>
     <h1>Cada dispositivo, con su propio pulso.</h1>
     <p>Visualiza tu red en tiempo real: estado de conexión, consumo de recursos y alertas, todo desde un solo panel.</p>
 
@@ -61,7 +61,7 @@
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-pulse"><span class="pulse-dot"></span></span>
-      <span class="brand-name">NetPulse</span>
+      <span class="brand-name">Juno</span>
     </div>
 
     <nav class="menu-nav">
@@ -279,8 +279,12 @@
 
       <button type="button" id="btn-escanear" class="btn btn-secondary btn-block">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        Escanear dispositivo (auto)
+        Escanear dispositivo con Nmap (Detección Auto)
       </button>
+
+      <div id="box-scan-result" class="scan-result-box hidden">
+        <!-- Llenado dinámicamente desde script.js tras escaneo Nmap -->
+      </div>
 
       <div class="form-grid">
         <div class="form-group">

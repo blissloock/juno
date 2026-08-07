@@ -62,7 +62,8 @@ pub async fn escanear_host(pool: &PgPool, host: &str) -> Result<serde_json::Valu
     Ok(datos)
 }
 
-/// Extrae puertos abiertos y sistema operativo detectado del XML de nmap.
+/// Extrae puertos abiertos, MAC, vendor, hostname y sistema operativo detectado del XML de nmap,
+/// e infiere automáticamente el tipo de dispositivo (Router, Switch, PC, Servidor, Impresora, Cámara).
 fn parsear_xml_nmap(xml: &str, host: &str) -> serde_json::Value {
     let mut lector = Reader::from_str(xml);
     lector.trim_text(true);
@@ -70,6 +71,9 @@ fn parsear_xml_nmap(xml: &str, host: &str) -> serde_json::Value {
     let mut puertos = Vec::new();
     let mut so_detectado: Option<String> = None;
     let mut estado_host: Option<String> = None;
+    let mut mac: Option<String> = None;
+    let mut vendor: Option<String> = None;
+    let mut hostname: Option<String> = None;
     let mut puerto_actual: Option<(String, String)> = None; // (protocolo, puertoid)
     let mut estado_actual: Option<String> = None;
     let mut buffer = Vec::new();
@@ -78,12 +82,35 @@ fn parsear_xml_nmap(xml: &str, host: &str) -> serde_json::Value {
         match lector.read_event_into(&mut buffer) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
                 b"status" if estado_host.is_none() => {
-                    // <status state="up"|"down"/> dentro de <host>: nos dice
-                    // si el equipo respondió al descubrimiento de nmap,
-                    // independientemente de si tiene puertos abiertos.
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"state" {
                             estado_host = Some(String::from_utf8_lossy(&attr.value).to_string());
+                        }
+                    }
+                }
+                b"address" => {
+                    let mut tipo_addr = String::new();
+                    let mut addr_val = String::new();
+                    let mut vendor_val = String::new();
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"addrtype" => tipo_addr = String::from_utf8_lossy(&attr.value).to_string(),
+                            b"addr" => addr_val = String::from_utf8_lossy(&attr.value).to_string(),
+                            b"vendor" => vendor_val = String::from_utf8_lossy(&attr.value).to_string(),
+                            _ => {}
+                        }
+                    }
+                    if tipo_addr == "mac" {
+                        mac = Some(addr_val);
+                        if !vendor_val.is_empty() {
+                            vendor = Some(vendor_val);
+                        }
+                    }
+                }
+                b"hostname" if hostname.is_none() => {
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref() == b"name" {
+                            hostname = Some(String::from_utf8_lossy(&attr.value).to_string());
                         }
                     }
                 }
@@ -146,13 +173,120 @@ fn parsear_xml_nmap(xml: &str, host: &str) -> serde_json::Value {
         buffer.clear();
     }
 
+    let tipo_inferido = clasificar_dispositivo(
+        host,
+        vendor.as_deref(),
+        hostname.as_deref(),
+        so_detectado.as_deref(),
+        &puertos,
+    );
+
     serde_json::json!({
         "host": host,
         "estado_host": estado_host,
         "puertos_abiertos": puertos,
         "so_detectado": so_detectado,
+        "mac": mac,
+        "vendor": vendor,
+        "hostname": hostname,
+        "tipo_inferido": tipo_inferido,
         "xml_crudo": xml,
     })
+}
+
+/// Infiere el tipo de dispositivo (Router, Switch, PC, Servidor, Impresora, Cámara)
+/// evaluando IP, fabricante (MAC vendor), hostname, SO detectado y lista de puertos abiertos.
+pub fn clasificar_dispositivo(
+    ip: &str,
+    vendor: Option<&str>,
+    hostname: Option<&str>,
+    so_detectado: Option<&str>,
+    puertos: &[serde_json::Value],
+) -> String {
+    let vendor_lower = vendor.unwrap_or("").to_lowercase();
+    let host_lower = hostname.unwrap_or("").to_lowercase();
+    let so_lower = so_detectado.unwrap_or("").to_lowercase();
+
+    let mut num_puertos = std::collections::HashSet::new();
+    let mut servicios = Vec::new();
+
+    for item in puertos {
+        if let Some(p_str) = item.get("puerto").and_then(|v| v.as_str()) {
+            if let Ok(p_num) = p_str.parse::<u16>() {
+                num_puertos.insert(p_num);
+            }
+        }
+        if let Some(s_str) = item.get("servicio").and_then(|v| v.as_str()) {
+            servicios.push(s_str.to_lowercase());
+        }
+    }
+
+    // 1. Impresora (Printer)
+    if num_puertos.contains(&631) || num_puertos.contains(&9100) || num_puertos.contains(&515)
+        || servicios.iter().any(|s| s.contains("ipp") || s.contains("jetdirect") || s.contains("printer") || s.contains("lpd"))
+        || vendor_lower.contains("epson") || vendor_lower.contains("canon") || vendor_lower.contains("brother")
+        || vendor_lower.contains("xerox") || vendor_lower.contains("lexmark") || vendor_lower.contains("kyocera") || vendor_lower.contains("ricoh")
+    {
+        return "Impresora".to_string();
+    }
+
+    // 2. Cámara (Camera / CCTV)
+    if num_puertos.contains(&554) || num_puertos.contains(&8000) || num_puertos.contains(&8899)
+        || servicios.iter().any(|s| s.contains("rtsp") || s.contains("onvif"))
+        || vendor_lower.contains("hikvision") || vendor_lower.contains("dahua") || vendor_lower.contains("axis")
+        || vendor_lower.contains("reolink") || vendor_lower.contains("amcrest") || vendor_lower.contains("foscam")
+        || host_lower.contains("cam") || host_lower.contains("camera") || host_lower.contains("cctv")
+    {
+        return "Cámara".to_string();
+    }
+
+    // 3. Switch
+    if host_lower.contains("switch") || host_lower.contains("sw-") || host_lower.contains("-sw")
+        || vendor_lower.contains("catalyst") || vendor_lower.contains("procurve")
+        || (vendor_lower.contains("cisco") && (num_puertos.contains(&161) || num_puertos.contains(&23)) && !num_puertos.contains(&53))
+        || (num_puertos.contains(&161) && num_puertos.contains(&23) && !num_puertos.contains(&80) && !num_puertos.contains(&443))
+    {
+        return "Switch".to_string();
+    }
+
+    // 4. Router (Gateway .1 / .254, DNS 53, DHCP 67/68, RouterOS, Cisco, Ubiquiti, TP-Link, etc.)
+    if ip.ends_with(".1") || ip.ends_with(".254")
+        || num_puertos.contains(&53) || num_puertos.contains(&67) || num_puertos.contains(&68)
+        || host_lower.contains("router") || host_lower.contains("gateway") || host_lower.contains("gw") || host_lower.contains("modem")
+        || vendor_lower.contains("mikrotik") || vendor_lower.contains("ubiquiti") || vendor_lower.contains("tp-link")
+        || vendor_lower.contains("netgear") || vendor_lower.contains("linksys") || vendor_lower.contains("fortinet")
+        || vendor_lower.contains("technicolor") || vendor_lower.contains("arcsady") || vendor_lower.contains("sagemcom")
+        || vendor_lower.contains("zte") || vendor_lower.contains("zyxel")
+        || so_lower.contains("routeros") || so_lower.contains("openwrt") || so_lower.contains("dd-wrt") || so_lower.contains("cisco ios")
+        || (vendor_lower.contains("cisco") && (num_puertos.contains(&80) || num_puertos.contains(&443) || num_puertos.contains(&22)))
+    {
+        return "Router".to_string();
+    }
+
+    // 5. Servidor (Server)
+    if num_puertos.contains(&3306) || num_puertos.contains(&5432) || num_puertos.contains(&27017) || num_puertos.contains(&6379) || num_puertos.contains(&1433)
+        || (num_puertos.contains(&22) && (num_puertos.contains(&80) || num_puertos.contains(&443) || num_puertos.contains(&8080) || num_puertos.contains(&8443)))
+        || host_lower.contains("server") || host_lower.contains("srv") || host_lower.contains("node") || host_lower.contains("cluster")
+        || so_lower.contains("server") || so_lower.contains("ubuntu server") || so_lower.contains("debian") || so_lower.contains("redhat") || so_lower.contains("centos") || so_lower.contains("proxmox") || so_lower.contains("esxi")
+    {
+        return "Servidor".to_string();
+    }
+
+    // 6. PC / Laptop / Workstation
+    if num_puertos.contains(&445) || num_puertos.contains(&135) || num_puertos.contains(&139) || num_puertos.contains(&3389) || num_puertos.contains(&5353)
+        || host_lower.contains("pc") || host_lower.contains("laptop") || host_lower.contains("desktop") || host_lower.contains("win") || host_lower.contains("macbook")
+        || vendor_lower.contains("apple") || vendor_lower.contains("intel") || vendor_lower.contains("dell") || vendor_lower.contains("lenovo") || vendor_lower.contains("microsoft") || vendor_lower.contains("realtek")
+        || so_lower.contains("windows") || so_lower.contains("mac") || so_lower.contains("ubuntu")
+    {
+        return "PC".to_string();
+    }
+
+    // Fallback inteligente
+    if num_puertos.contains(&80) || num_puertos.contains(&443) {
+        "Router".to_string()
+    } else {
+        "PC".to_string()
+    }
 }
 
 /// Loop periódico OPCIONAL: si se define `NMAP_HOSTS`
@@ -203,11 +337,7 @@ pub async fn iniciar_escaner_nmap(pool: PgPool) -> std::io::Result<()> {
 /// con un ping-sweep (`nmap -sn`, sin escaneo de puertos -- mucho más
 /// rápido que un escaneo completo cuando son ~254 hosts) y agrega
 /// automáticamente como dispositivo cualquier host que responda y que
-/// todavía no esté registrado en `dispositivos`. Nunca modifica ni
-/// duplica los que el usuario ya dio de alta a mano (usa UNIQUE(ip) para
-/// eso, ver migrations/0003_dispositivos.sql): si un host descubierto ya
-/// existe, simplemente se cuenta como "ya registrado" y se deja como
-/// está.
+/// todavía no esté registrado en `dispositivos`.
 pub async fn descubrir_red(pool: &PgPool, red: &str) -> Result<serde_json::Value, String> {
     validar_cidr(red)?;
 
@@ -244,11 +374,16 @@ pub async fn descubrir_red(pool: &PgPool, red: &str) -> Result<serde_json::Value
             .clone()
             .unwrap_or_else(|| format!("Dispositivo {}", host.ip));
 
-        match db::crear_dispositivo(pool, &nombre, "Desconocido", &host.ip).await {
+        let tipo_inferido = clasificar_dispositivo(
+            &host.ip,
+            host.vendor.as_deref(),
+            host.hostname.as_deref(),
+            None,
+            &[],
+        );
+
+        match db::crear_dispositivo(pool, &nombre, &tipo_inferido, &host.ip).await {
             Ok(dispositivo) => agregados.push(dispositivo),
-            // El caso normal aquí es violar UNIQUE(ip) porque el host ya
-            // estaba registrado -- no es un error real, solo significa
-            // que no hay nada nuevo que agregar para esa IP.
             Err(_) => ya_registrados += 1,
         }
     }
@@ -269,10 +404,6 @@ pub async fn descubrir_red(pool: &PgPool, red: &str) -> Result<serde_json::Value
     }))
 }
 
-/// Por seguridad, no se permite escanear rangos gigantescos por accidente
-/// (ej. alguien escribe algo como "10.0.0.0/8" sin querer, que son
-/// millones de hosts). Se limita a /16 como mínimo, que ya es generoso
-/// (65 mil hosts) para cualquier red doméstica o de laboratorio.
 fn validar_cidr(red: &str) -> Result<(), String> {
     let prefijo: u8 = red
         .split('/')
@@ -292,13 +423,12 @@ fn validar_cidr(red: &str) -> Result<(), String> {
 struct HostDescubierto {
     ip: String,
     hostname: Option<String>,
+    #[allow(dead_code)]
+    mac: Option<String>,
+    vendor: Option<String>,
     estado: Option<String>,
 }
 
-/// Parsea el XML de un `nmap -sn` sobre un rango: a diferencia de
-/// `parsear_xml_nmap` (que asume un solo <host>), aquí puede haber
-/// decenas de bloques <host>, uno por cada IP del rango que nmap alcanzó
-/// a evaluar.
 fn parsear_xml_descubrimiento(xml: &str) -> Vec<HostDescubierto> {
     let mut lector = Reader::from_str(xml);
     lector.trim_text(true);
@@ -306,6 +436,8 @@ fn parsear_xml_descubrimiento(xml: &str) -> Vec<HostDescubierto> {
     let mut hosts = Vec::new();
     let mut ip_actual: Option<String> = None;
     let mut hostname_actual: Option<String> = None;
+    let mut mac_actual: Option<String> = None;
+    let mut vendor_actual: Option<String> = None;
     let mut estado_actual: Option<String> = None;
     let mut dentro_de_host = false;
     let mut buffer = Vec::new();
@@ -316,6 +448,8 @@ fn parsear_xml_descubrimiento(xml: &str) -> Vec<HostDescubierto> {
                 dentro_de_host = true;
                 ip_actual = None;
                 hostname_actual = None;
+                mac_actual = None;
+                vendor_actual = None;
                 estado_actual = None;
             }
             Ok(Event::End(ref e)) if e.name().as_ref() == b"host" => {
@@ -324,6 +458,8 @@ fn parsear_xml_descubrimiento(xml: &str) -> Vec<HostDescubierto> {
                         hosts.push(HostDescubierto {
                             ip,
                             hostname: hostname_actual.take(),
+                            mac: mac_actual.take(),
+                            vendor: vendor_actual.take(),
                             estado: estado_actual.take(),
                         });
                     }
@@ -343,20 +479,24 @@ fn parsear_xml_descubrimiento(xml: &str) -> Vec<HostDescubierto> {
                     b"address" => {
                         let mut tipo_addr = String::new();
                         let mut valor = String::new();
+                        let mut vendor = String::new();
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"addrtype" => {
                                     tipo_addr = String::from_utf8_lossy(&attr.value).to_string()
                                 }
                                 b"addr" => valor = String::from_utf8_lossy(&attr.value).to_string(),
+                                b"vendor" => vendor = String::from_utf8_lossy(&attr.value).to_string(),
                                 _ => {}
                             }
                         }
-                        // Solo nos interesa la IPv4; nmap también reporta
-                        // la MAC como otro <address> distinto cuando el
-                        // ARP scan funciona (misma subred + privilegios).
                         if tipo_addr == "ipv4" && ip_actual.is_none() {
                             ip_actual = Some(valor);
+                        } else if tipo_addr == "mac" {
+                            mac_actual = Some(valor);
+                            if !vendor.is_empty() {
+                                vendor_actual = Some(vendor);
+                            }
                         }
                     }
                     b"hostname" => {
