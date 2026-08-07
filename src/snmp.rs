@@ -44,9 +44,12 @@ use std::time::Duration;
 const OIDS_A_CONSULTAR: &[(&str, &[u32])] = &[
     ("sysDescr", &[1, 3, 6, 1, 2, 1, 1, 1, 0]),
     ("sysUpTime", &[1, 3, 6, 1, 2, 1, 1, 3, 0]),
-    ("laLoad_1min", &[1, 3, 6, 1, 4, 1, 2021, 10, 1, 3, 1]), // UCD-SNMP: carga CPU 1 min
-    ("memTotalReal", &[1, 3, 6, 1, 4, 1, 2021, 4, 5, 0]),
-    ("memAvailReal", &[1, 3, 6, 1, 4, 1, 2021, 4, 6, 0]),
+    ("laLoad_1min", &[1, 3, 6, 1, 4, 1, 2021, 10, 1, 3, 1]),   // UCD-SNMP (Linux)
+    ("memTotalReal", &[1, 3, 6, 1, 4, 1, 2021, 4, 5, 0]),      // UCD-SNMP (Linux)
+    ("memAvailReal", &[1, 3, 6, 1, 4, 1, 2021, 4, 6, 0]),      // UCD-SNMP (Linux)
+    ("ciscoCpu5min", &[1, 3, 6, 1, 4, 1, 9, 9, 109, 1, 1, 1, 1, 7, 1]),  // CISCO-PROCESS-MIB
+    ("ciscoMemUsado", &[1, 3, 6, 1, 4, 1, 9, 9, 48, 1, 1, 1, 5, 1]),     // CISCO-MEMORY-POOL-MIB
+    ("ciscoMemLibre", &[1, 3, 6, 1, 4, 1, 9, 9, 48, 1, 1, 1, 6, 1]),     // CISCO-MEMORY-POOL-MIB
 ];
 
 #[derive(Clone)]
@@ -230,24 +233,29 @@ fn consultar_snmp_bloqueante(
         ));
     }
 
-    // laLoad_1min (UCD-SNMP-MIB) es un promedio de carga ("load average"),
-    // NO un porcentaje de uso de CPU real -- un valor de 1.0 en un equipo
-    // de 1 núcleo significa "100% ocupado", pero en un equipo de 4
-    // núcleos significa "25% ocupado en promedio". Como no consultamos
-    // el número de núcleos (no hay un OID estándar simple y universal
-    // para eso), lo normalizamos multiplicándolo por 100 y recortándolo a
-    // [0,100] como una aproximación visual para el gauge del frontend.
-    // Queda documentado aquí para que en la defensa puedan explicar la
-    // limitación en vez de presentarlo como un %CPU exacto.
+    // cpmCPUTotal5minRev (Cisco) ya viene como porcentaje real 0-100 --
+    // a diferencia del "load average" de Linux, no necesita ninguna
+    // conversión. El índice ".1" al final asume un solo CPU lógico, que
+    // es el caso normal en un 1841.
     let cpu_pct = numericos
-        .get("laLoad_1min")
-        .map(|carga| (carga * 100.0).clamp(0.0, 100.0) as f32);
+        .get("ciscoCpu5min")
+        .map(|c| (*c as f32).clamp(0.0, 100.0))
+        .or_else(|| {
+            numericos
+                .get("laLoad_1min")
+                .map(|carga| (carga * 100.0).clamp(0.0, 100.0) as f32)
+        });
 
-    let ram_pct = match (numericos.get("memTotalReal"), numericos.get("memAvailReal")) {
-        (Some(total), Some(disponible)) if *total > 0.0 => {
-            Some((((total - disponible) / total) * 100.0).clamp(0.0, 100.0) as f32)
+    let ram_pct = match (numericos.get("ciscoMemUsado"), numericos.get("ciscoMemLibre")) {
+        (Some(usado), Some(libre)) if (usado + libre) > 0.0 => {
+            Some(((usado / (usado + libre)) * 100.0).clamp(0.0, 100.0) as f32)
         }
-        _ => None,
+        _ => match (numericos.get("memTotalReal"), numericos.get("memAvailReal")) {
+            (Some(total), Some(disponible)) if *total > 0.0 => {
+                Some((((total - disponible) / total) * 100.0).clamp(0.0, 100.0) as f32)
+            }
+            _ => None,
+        },
     };
 
     Ok((
