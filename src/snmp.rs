@@ -9,6 +9,16 @@
 //! para pintar los gauges, así que sin este paso el frontend siempre
 //! mostraría "N/D" aunque el polling SNMP estuviera funcionando bien.
 //!
+//! Además, opcionalmente (ver `SNMP_AUTO_IDENTIFICAR` más abajo), usa
+//! `sysName` y `sysDescr` para identificar automáticamente cada equipo:
+//! `sysName` es el hostname que ustedes configuren a mano en el propio
+//! dispositivo (ej. "hostname R1" en el IOS de un 1841), así que es la
+//! forma más confiable de diferenciar R1 de R2 y del switch -- mucho más
+//! confiable que adivinar por puertos abiertos (que es lo que hace
+//! `nmap.rs::clasificar_dispositivo`). `sysDescr` trae el modelo en texto
+//! libre (ej. "...C1841 Software..." o "...WS-C2960...") y sirve para
+//! autoclasificar Router vs Switch.
+//!
 //! Nota técnica importante: el crate `snmp` es SÍNCRONO (usa
 //! `std::net::UdpSocket` con timeout por debajo, no tokio). Si lo
 //! llamáramos directamente desde una tarea async, bloquearíamos el
@@ -20,9 +30,10 @@
 //! (solo `Debug`), así que guardamos su representación `Debug` completa
 //! dentro del documento JSON en vez de intentar reconstruirlo campo por
 //! campo. Es información completa y consultable igual, solo que como
-//! texto. Para las métricas que sí necesitamos como número (CPU/RAM),
-//! extraemos el valor tipado del varbind por separado (ver
-//! `valor_a_f64`), sin depender de parsear ese texto de Debug.
+//! texto. Para las métricas que sí necesitamos como número (CPU/RAM) o
+//! texto (sysName/sysDescr), extraemos el valor tipado del varbind por
+//! separado (ver `valor_a_f64` / `valor_a_texto`), sin depender de
+//! parsear ese texto de Debug.
 
 use crate::db;
 use snmp::{SyncSession, Value};
@@ -32,7 +43,9 @@ use std::net::ToSocketAddrs;
 use std::time::Duration;
 
 /// OIDs estándar (MIB-2) + UCD-SNMP-MIB (típico en agentes net-snmp de
-/// Linux, como el HP Z620), cada uno con un nombre legible.
+/// Linux, como el HP Z620) + CISCO-PROCESS-MIB/CISCO-MEMORY-POOL-MIB
+/// (routers/switches Cisco IOS, que no exponen UCD-SNMP-MIB), cada uno
+/// con un nombre legible.
 ///
 /// Nota técnica: en esta versión del crate `snmp`, `SyncSession::get`
 /// recibe UN SOLO OID por llamada (`&[u32]`), no una lista de varios OIDs
@@ -43,6 +56,7 @@ use std::time::Duration;
 /// específico, los demás igual quedan guardados en vez de perderse todos.
 const OIDS_A_CONSULTAR: &[(&str, &[u32])] = &[
     ("sysDescr", &[1, 3, 6, 1, 2, 1, 1, 1, 0]),
+    ("sysName", &[1, 3, 6, 1, 2, 1, 1, 5, 0]), // hostname configurado a mano en el equipo
     ("sysUpTime", &[1, 3, 6, 1, 2, 1, 1, 3, 0]),
     ("laLoad_1min", &[1, 3, 6, 1, 4, 1, 2021, 10, 1, 3, 1]),   // UCD-SNMP (Linux)
     ("memTotalReal", &[1, 3, 6, 1, 4, 1, 2021, 4, 5, 0]),      // UCD-SNMP (Linux)
@@ -59,11 +73,14 @@ struct HostSnmp {
 }
 
 /// Resultado de convertir los varbinds crudos a algo que sí podemos
-/// guardar como columna numérica en `dispositivos`.
+/// guardar como columna en `dispositivos` (numérico para CPU/RAM, texto
+/// para identidad).
 #[derive(Debug, Default)]
 struct MetricasParsed {
     cpu_pct: Option<f32>,
     ram_pct: Option<f32>,
+    sys_name: Option<String>,
+    tipo_detectado: Option<String>,
 }
 
 /// Convierte un `Value` de SNMP a `f64` sin importar el tipo ASN.1 exacto
@@ -77,6 +94,17 @@ fn valor_a_f64(valor: &Value) -> Option<f64> {
         Value::Timeticks(u) => Some(*u as f64),
         Value::Counter64(u) => Some(*u as f64),
         Value::OctetString(bytes) => std::str::from_utf8(bytes).ok()?.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+/// Igual que `valor_a_f64` pero para los OID que traen texto (sysName,
+/// sysDescr): la mayoría de agentes SNMP los devuelven como OctetString.
+fn valor_a_texto(valor: &Value) -> Option<String> {
+    match valor {
+        Value::OctetString(bytes) => {
+            std::str::from_utf8(bytes).ok().map(|s| s.trim().to_string())
+        }
         _ => None,
     }
 }
@@ -171,13 +199,37 @@ async fn consultar_host(pool: &PgPool, cfg: &HostSnmp) -> Result<(), String> {
         }
     }
 
+    // Identificación automática (nombre/tipo desde sysName/sysDescr):
+    // apagada por default -- ver SNMP_AUTO_IDENTIFICAR en .env.example.
+    // Se deja como opt-in para no sobreescribir un nombre que ya hayan
+    // puesto a mano desde el dashboard sin que el equipo lo espere.
+    let auto_identificar = env::var("SNMP_AUTO_IDENTIFICAR")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
+    if auto_identificar && (metricas.sys_name.is_some() || metricas.tipo_detectado.is_some()) {
+        if let Err(e) = db::actualizar_identidad_dispositivo(
+            pool,
+            &cfg.host,
+            metricas.sys_name.as_deref(),
+            metricas.tipo_detectado.as_deref(),
+        )
+        .await
+        {
+            log::warn!(
+                "SNMP identificó {} pero no se pudo actualizar nombre/tipo en 'dispositivos': {}",
+                cfg.host, e
+            );
+        }
+    }
+
     Ok(())
 }
 
 /// Consulta síncrona real vía SNMP GET. Se ejecuta dentro de
 /// `spawn_blocking` (ver `consultar_host`). Regresa tanto el documento
-/// JSON crudo (para `eventos`) como las métricas ya parseadas a número
-/// (para `dispositivos`).
+/// JSON crudo (para `eventos`) como las métricas ya parseadas a número o
+/// texto (para `dispositivos`).
 fn consultar_snmp_bloqueante(
     host: &str,
     community: &str,
@@ -198,6 +250,7 @@ fn consultar_snmp_bloqueante(
 
     let mut valores = serde_json::Map::new();
     let mut numericos: std::collections::HashMap<&str, f64> = std::collections::HashMap::new();
+    let mut textos: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     let mut algun_exito = false;
 
     for (nombre, oid) in OIDS_A_CONSULTAR {
@@ -209,10 +262,16 @@ fn consultar_snmp_bloqueante(
                 valores.insert((*nombre).to_string(), serde_json::json!(format!("{:?}", pdu)));
 
                 // Además, intentamos extraer el valor tipado del primer
-                // varbind de la respuesta para poder convertirlo a número.
+                // varbind de la respuesta para poder convertirlo a número
+                // o a texto según el OID.
                 if let Some((_oid_resp, valor)) = pdu.varbinds.next() {
                     if let Some(num) = valor_a_f64(&valor) {
                         numericos.insert(*nombre, num);
+                    }
+                    if let Some(texto) = valor_a_texto(&valor) {
+                        if !texto.is_empty() {
+                            textos.insert(*nombre, texto);
+                        }
                     }
                 }
             }
@@ -258,12 +317,37 @@ fn consultar_snmp_bloqueante(
         },
     };
 
+    // sysName es el hostname que ustedes configuren a mano en cada equipo
+    // ("hostname R1" en el IOS) -- es la forma más confiable de
+    // diferenciar R1 de R2 y del switch, mucho mejor que adivinar por
+    // puertos abiertos (que es lo que hace nmap.rs::clasificar_dispositivo).
+    let sys_name = textos.get("sysName").cloned();
+
+    // sysDescr trae el modelo/plataforma en texto libre (ej. "Cisco IOS
+    // Software, C1841 Software..." o "...WS-C2960..."), así que buscamos
+    // ahí pistas del modelo para autoclasificar Router vs Switch.
+    let tipo_detectado = textos.get("sysDescr").and_then(|descr| {
+        let d = descr.to_lowercase();
+        if d.contains("2960") || d.contains("catalyst") {
+            Some("Switch".to_string())
+        } else if d.contains("1841") || d.contains("cisco ios") {
+            Some("Router".to_string())
+        } else {
+            None
+        }
+    });
+
     Ok((
         serde_json::json!({
             "host": host,
             "community_usada": community,
             "valores": valores,
         }),
-        MetricasParsed { cpu_pct, ram_pct },
+        MetricasParsed {
+            cpu_pct,
+            ram_pct,
+            sys_name,
+            tipo_detectado,
+        },
     ))
 }

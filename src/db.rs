@@ -575,3 +575,35 @@ pub async fn actualizar_metricas_dispositivo(
     Ok(fila.map(fila_a_dispositivo))
 }
 
+/// Sincroniza nombre/tipo de un dispositivo ya registrado a partir de lo
+/// que reporta SNMP (sysName / sysDescr) -- ver snmp.rs y la variable de
+/// entorno SNMP_AUTO_IDENTIFICAR. Pensado para diferenciar automáticamente
+/// R1/R2/switch (u otros equipos) usando el hostname que ustedes mismos
+/// configuren en cada dispositivo, en vez de tener que renombrarlos a
+/// mano uno por uno en el dashboard.
+///
+/// Usa COALESCE: si SNMP no trajo un valor nuevo en esta ronda (por
+/// ejemplo, el OID sysName no respondió), el nombre/tipo que ya había en
+/// el catálogo se queda igual -- nunca se pisa con algo vacío.
+pub async fn actualizar_identidad_dispositivo(
+    pool: &PgPool,
+    ip: &str,
+    nombre: Option<&str>,
+    tipo: Option<&str>,
+) -> Result<Option<Dispositivo>, sqlx::Error> {
+    let fila = sqlx::query(
+        "UPDATE dispositivos
+         SET nombre = COALESCE($1, nombre),
+             tipo = COALESCE($2, tipo),
+             actualizado_en = NOW()
+         WHERE ip = $3
+         RETURNING id, nombre, tipo, ip, estado, cpu_pct, ram_pct, temp_c, actualizado_en",
+    )
+    .bind(nombre)
+    .bind(tipo)
+    .bind(ip)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(fila.map(fila_a_dispositivo))
+}
