@@ -47,15 +47,28 @@ services:
     networks:
       - juno_network
 
-  # 3. Servidor Web Ligero para el Frontend de tu Equipo (Nginx)
+  # 3. Frontend (Nginx) + Cloudflare Tunnel, empaquetados en el mismo
+  #    contenedor (ver frontend/Dockerfile y frontend/entrypoint.sh) --
+  #    así todo lo que da la cara al público viaja como una sola imagen,
+  #    portable a cualquier equipo sin depender de un segundo contenedor.
+  #    El HTML/CSS/JS ya quedan horneados dentro de la imagen (ver
+  #    Dockerfile), así que ya NO se monta ./frontend como volumen.
   frontend:
-    image: nginx:alpine
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: juno_frontend
     restart: always
     ports:
       - "80:80"
     volumes:
-      - ./frontend:/usr/share/nginx/html
+      # Config y credenciales del túnel SÍ se montan desde el host (no se
+      # hornean en la imagen): así la misma imagen sirve para cualquier
+      # dominio/túnel sin tener que reconstruirla, y las credenciales
+      # nunca terminan versionadas en la imagen ni en git (ver
+      # .gitignore: cloudflared/creds.json).
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/creds.json:/etc/cloudflared/creds.json:ro
     networks:
       - juno_network
 

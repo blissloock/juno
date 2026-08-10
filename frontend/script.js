@@ -102,6 +102,19 @@
   const toast = document.getElementById('toast');
   const reloj = document.getElementById('reloj');
 
+  // Theme & View elements
+  const btnThemeToggle = document.getElementById('btn-theme-toggle');
+  const themeIconSun = document.getElementById('theme-icon-sun');
+  const themeIconMoon = document.getElementById('theme-icon-moon');
+  const themeText = document.getElementById('theme-text');
+
+  const btnViewTable = document.getElementById('btn-view-table');
+  const btnViewGrid = document.getElementById('btn-view-grid');
+  const containerTabla = document.getElementById('container-tabla');
+  const containerGrid = document.getElementById('container-grid');
+  const gridDispositivos = document.getElementById('grid-dispositivos');
+  let modoVista = 'tabla';
+
   // ---------- Cliente API ----------
   async function apiFetch(path, opciones = {}) {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -216,6 +229,48 @@ function entrarAlPanel() {
     });
   });
 
+  // ---------- Tema Claro / Oscuro ----------
+  function aplicarTema(tema) {
+    document.documentElement.setAttribute('data-theme', tema);
+    localStorage.setItem('juno_theme', tema);
+    const esClaro = tema === 'light';
+    if (themeIconSun) themeIconSun.classList.toggle('hidden', !esClaro);
+    if (themeIconMoon) themeIconMoon.classList.toggle('hidden', esClaro);
+    if (themeText) themeText.textContent = esClaro ? 'Modo Claro' : 'Modo Oscuro';
+  }
+
+  const temaGuardado = localStorage.getItem('juno_theme') ||
+    (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  aplicarTema(temaGuardado);
+
+  if (btnThemeToggle) {
+    btnThemeToggle.addEventListener('click', () => {
+      const temaActual = document.documentElement.getAttribute('data-theme') || 'dark';
+      aplicarTema(temaActual === 'light' ? 'dark' : 'light');
+    });
+  }
+
+  // ---------- Vista Tabla vs Grid ----------
+  if (btnViewTable && btnViewGrid) {
+    btnViewTable.addEventListener('click', () => {
+      modoVista = 'tabla';
+      btnViewTable.classList.add('active');
+      btnViewGrid.classList.remove('active');
+      containerTabla.classList.remove('hidden');
+      containerGrid.classList.add('hidden');
+      renderDispositivos();
+    });
+
+    btnViewGrid.addEventListener('click', () => {
+      modoVista = 'grid';
+      btnViewGrid.classList.add('active');
+      btnViewTable.classList.remove('active');
+      containerGrid.classList.remove('hidden');
+      containerTabla.classList.add('hidden');
+      renderDispositivos();
+    });
+  }
+
   // ---------- Reloj ----------
   function actualizarReloj() {
     reloj.textContent = new Date().toLocaleTimeString('es-MX');
@@ -251,7 +306,7 @@ function entrarAlPanel() {
       const idsActuales = new Set(dispositivos.map(d => d.id));
       idsSeleccionados = new Set([...idsSeleccionados].filter(id => idsActuales.has(id)));
 
-      renderTabla();
+      renderDispositivos();
       renderMetricas();
     } catch (e) {
       if (e.message !== 'No autenticado') mostrarToast(e.message);
@@ -289,7 +344,7 @@ function entrarAlPanel() {
   if (inputBusqueda) {
     inputBusqueda.addEventListener('input', (e) => {
       textoBusqueda = e.target.value.trim();
-      renderTabla();
+      renderDispositivos();
     });
   }
 
@@ -298,32 +353,49 @@ function entrarAlPanel() {
       filterBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       filtroEstado = btn.dataset.filter;
-      renderTabla();
+      renderDispositivos();
     });
   });
 
-  // ---------- Render: tabla de dispositivos ----------
+  function renderDispositivos() {
+    renderTabla();
+    renderGrid();
+  }
+
   function obtenerDispositivosFiltrados() {
     return dispositivos.filter(d => {
-      const cumpleEstado = filtroEstado === 'todos' || d.estado === filtroEstado;
+      let cumpleEstado = true;
+      const t = (d.tipo || '').toLowerCase();
+
+      if (filtroEstado === 'online' || filtroEstado === 'offline' || filtroEstado === 'warning') {
+        cumpleEstado = d.estado === filtroEstado;
+      } else if (filtroEstado === 'switch') {
+        cumpleEstado = t.includes('switch') || t.includes('sw');
+      } else if (filtroEstado === 'router') {
+        cumpleEstado = t.includes('router') || t.includes('gateway');
+      } else if (filtroEstado === 'servidor') {
+        cumpleEstado = t.includes('servidor') || t.includes('server');
+      }
+
       const q = textoBusqueda.toLowerCase();
       const cumpleBusqueda = !q ||
         d.nombre.toLowerCase().includes(q) ||
         d.ip.toLowerCase().includes(q) ||
         d.tipo.toLowerCase().includes(q);
+
       return cumpleEstado && cumpleBusqueda;
     });
   }
 
   function badgeTipoDispositivo(tipo) {
     const t = (tipo || '').toLowerCase();
-    let icono = '💻';
-    let clase = 'type-pc';
+    let icono = '📦';
+    let clase = 'type-otro';
 
     if (t.includes('router') || t.includes('gateway')) {
       icono = '🌐';
       clase = 'type-router';
-    } else if (t.includes('switch')) {
+    } else if (t.includes('switch') || t.includes('sw')) {
       icono = '🔌';
       clase = 'type-switch';
     } else if (t.includes('servidor') || t.includes('server')) {
@@ -335,6 +407,15 @@ function entrarAlPanel() {
     } else if (t.includes('cámara') || t.includes('camara') || t.includes('camera')) {
       icono = '📹';
       clase = 'type-camara';
+    } else if (t.includes('access point') || t.includes('ap') || t.includes('wifi')) {
+      icono = '📡';
+      clase = 'type-ap';
+    } else if (t.includes('firewall') || t.includes('cortafuegos')) {
+      icono = '🛡️';
+      clase = 'type-firewall';
+    } else if (t.includes('pc') || t.includes('desktop') || t.includes('laptop')) {
+      icono = '💻';
+      clase = 'type-pc';
     }
 
     return `<span class="type-badge ${clase}">${icono} ${escapeHtml(tipo)}</span>`;
@@ -378,6 +459,7 @@ function entrarAlPanel() {
         else idsSeleccionados.delete(d.id);
         actualizarAccionesMasivas();
         tr.classList.toggle('selected', chk.checked);
+        renderGrid();
       });
 
       tr.addEventListener('click', () => {
@@ -390,6 +472,7 @@ function entrarAlPanel() {
         }
         actualizarAccionesMasivas();
         tr.classList.toggle('selected', chk.checked);
+        renderGrid();
       });
 
       tablaBody.appendChild(tr);
@@ -397,6 +480,67 @@ function entrarAlPanel() {
 
     actualizarStats();
     actualizarAccionesMasivas();
+  }
+
+  function renderGrid() {
+    if (!gridDispositivos) return;
+    gridDispositivos.innerHTML = '';
+    const filtrados = obtenerDispositivosFiltrados();
+
+    filtrados.forEach(d => {
+      const card = document.createElement('div');
+      const estaSeleccionado = idsSeleccionados.has(d.id);
+      card.className = 'device-card' + (estaSeleccionado ? ' selected' : '');
+      card.dataset.id = d.id;
+
+      card.innerHTML = `
+        <div class="device-card-header">
+          <div class="device-card-title">
+            <input type="checkbox" class="chk-card-row" data-id="${d.id}" ${estaSeleccionado ? 'checked' : ''}>
+            <h3 class="device-card-name">${escapeHtml(d.nombre)}</h3>
+          </div>
+          ${badgeTipoDispositivo(d.tipo)}
+        </div>
+        <div class="device-card-body">
+          <div class="device-card-ip">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            ${escapeHtml(d.ip)}
+          </div>
+        </div>
+        <div class="device-card-footer">
+          <span class="status-pill ${claseEstado(d.estado)}">
+            <span class="pulse-dot small ${d.estado === 'online' ? '' : d.estado}"></span>
+            ${textoEstado(d.estado)}
+          </span>
+          <span>Red Juno</span>
+        </div>
+      `;
+
+      const chk = card.querySelector('.chk-card-row');
+      chk.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (chk.checked) idsSeleccionados.add(d.id);
+        else idsSeleccionados.delete(d.id);
+        actualizarAccionesMasivas();
+        card.classList.toggle('selected', chk.checked);
+        renderTabla();
+      });
+
+      card.addEventListener('click', () => {
+        if (idsSeleccionados.has(d.id)) {
+          idsSeleccionados.delete(d.id);
+          chk.checked = false;
+        } else {
+          idsSeleccionados.add(d.id);
+          chk.checked = true;
+        }
+        actualizarAccionesMasivas();
+        card.classList.toggle('selected', chk.checked);
+        renderTabla();
+      });
+
+      gridDispositivos.appendChild(card);
+    });
   }
 
   if (chkSelectAll) {
@@ -407,7 +551,7 @@ function entrarAlPanel() {
       } else {
         filtrados.forEach(d => idsSeleccionados.delete(d.id));
       }
-      renderTabla();
+      renderDispositivos();
     });
   }
 
@@ -691,6 +835,26 @@ function entrarAlPanel() {
   });
 
   // ---------- Modal: nuevo / editar ----------
+  function normalizarSeleccionTipo(tipo) {
+    if (!tipo) return '';
+    const t = tipo.toLowerCase();
+    if (t.includes('switch') || t.includes('sw')) return 'Switch';
+    if (t.includes('router') || t.includes('gateway')) return 'Router';
+    if (t.includes('servidor') || t.includes('server')) return 'Servidor';
+    if (t.includes('pc') || t.includes('desktop') || t.includes('laptop') || t.includes('computadora')) return 'PC';
+    if (t.includes('impresora') || t.includes('printer')) return 'Impresora';
+    if (t.includes('cámara') || t.includes('camara') || t.includes('camera')) return 'Cámara';
+    if (t.includes('access point') || t.includes('ap') || t.includes('wifi')) return 'Access Point';
+    if (t.includes('firewall') || t.includes('cortafuegos')) return 'Firewall';
+
+    if (txtTipo && txtTipo.options) {
+      for (let i = 0; i < txtTipo.options.length; i++) {
+        if (txtTipo.options[i].value.toLowerCase() === t) return txtTipo.options[i].value;
+      }
+    }
+    return 'Otro';
+  }
+
   function abrirModal(dispositivo) {
     form.reset();
     txtCpu.value = ''; txtRam.value = ''; txtTemp.value = ''; txtUptime.value = ''; txtEstado.value = '';
@@ -705,7 +869,7 @@ function entrarAlPanel() {
       modalTitulo.textContent = 'Editar dispositivo';
       dispIndex.value = dispositivo.id;
       txtNombre.value = dispositivo.nombre;
-      txtTipo.value = dispositivo.tipo;
+      txtTipo.value = normalizarSeleccionTipo(dispositivo.tipo);
       txtIp.value = dispositivo.ip;
       txtEstado.value = textoEstado(dispositivo.estado);
       txtCpu.value = dispositivo.cpu_pct != null ? dispositivo.cpu_pct + '%' : 'N/D';
@@ -715,6 +879,7 @@ function entrarAlPanel() {
     } else {
       modalTitulo.textContent = 'Nuevo dispositivo';
       dispIndex.value = '';
+      txtTipo.value = '';
     }
     modal.classList.remove('hidden');
     txtNombre.focus();
@@ -787,7 +952,7 @@ function entrarAlPanel() {
 
       // Asignar tipo inferido automáticamente al campo Tipo del formulario
       if (datos.tipo_inferido) {
-        txtTipo.value = datos.tipo_inferido;
+        txtTipo.value = normalizarSeleccionTipo(datos.tipo_inferido);
       }
 
       // Mostrar resumen visual del escaneo Nmap en la caja del modal

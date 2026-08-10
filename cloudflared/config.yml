@@ -1,0 +1,29 @@
+# Config de Cloudflare Tunnel para Juno.
+#
+# IMPORTANTE: reemplaza <TUNNEL_ID> por el ID real que te dio
+# `cloudflared tunnel create juno`, y reemplaza los hostnames por tu
+# dominio real comprado en Cloudflare.
+#
+# Este archivo se monta como volumen de solo lectura en el contenedor del
+# frontend (ver docker-compose.yml) -- NO se hornea dentro de la imagen,
+# así la misma imagen sirve para cualquier equipo/entorno sin tener que
+# reconstruirla cada vez que cambien el dominio o el túnel.
+
+tunnel: 27519562-d391-4 
+credentials-file: /etc/cloudflared/creds.json
+
+ingress:
+  # app.tudominio.com -> nginx en el MISMO contenedor (localhost, no un
+  # nombre de servicio Docker, porque cloudflared y nginx ahora corren
+  # juntos en el mismo contenedor).
+  - hostname: app.juno-monitor.win
+    service: http://localhost:80
+
+  # api.tudominio.com -> el contenedor del backend, alcanzable por su
+  # nombre de servicio porque ambos siguen en la misma red juno_network.
+  - hostname: api.juno-monitor.win
+    service: http://backend:8080
+
+  # Regla de cierre obligatoria: cualquier hostname no listado arriba
+  # responde 404 en vez de exponer algo por accidente.
+  - service: http_status:404

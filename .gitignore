@@ -10,6 +10,8 @@
 .vscode/
 .idea/
 
-# 4. Archivos basura del sistema operativo (Mac y Windows)
+# 4. Recursos de Cloudflare privados
+cloudflared/creds.json
+# 5. Archivos basura del sistema operativo (Mac y Windows)
 .DS_Store
 Thumbs.db
