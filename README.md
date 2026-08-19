@@ -382,7 +382,3 @@ Verifica que el router exportando NetFlow sea el que efectivamente enruta el tr�
 
 **SNMP no responde en un equipo Cisco**
 Los OIDs de `UCD-SNMP-MIB` son específicos de Linux. Cisco IOS necesita `CISCO-PROCESS-MIB` / `CISCO-MEMORY-POOL-MIB` (ya contemplados con fallback en `src/snmp.rs`), además de tener SNMP habilitado y el `community` correcto configurado en el propio equipo.
-
----
-
-*Universidad Politécnica de Texcoco · Proyecto Integrador II · Equipo Linux Monsters (5MTII1) · Profesora: Luna Becerril*
